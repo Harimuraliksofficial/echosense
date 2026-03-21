@@ -1,4 +1,4 @@
-const OPENROUTER_API_KEY = "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";
+const OPENROUTER_API_KEY = "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";
 
 const langMap = {
   'english': 'en',
