@@ -1,62 +1,28 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, Animated } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Voice from '@react-native-voice/voice';
 import { Audio } from 'expo-av';
-import { WebView } from 'react-native-webview';
 
 import { processSpeech } from '../utils/keywordLogic';
 import VisualDisplay from '../components/VisualDisplay';
 import MicButton from '../components/MicButton';
+
+const BACKEND_URL = "http://10.110.139.194:5000/transcribe";
 
 export default function HomeScreen() {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [summary, setSummary] = useState('');
   const [symbols, setSymbols] = useState(null);
-  
-  const [useWebFallback, setUseWebFallback] = useState(false);
-  const webViewRef = useRef(null);
+  const [recording, setRecording] = useState(null);
 
   useEffect(() => {
-    // Determine if we need to use the WebView fallback for Expo Go
-    const checkVoice = async () => {
-      try {
-        const isAvailable = await Voice.isAvailable();
-        if (!isAvailable && !Voice._voiceManager) {
-          setUseWebFallback(true);
-        }
-      } catch (e) {
-        setUseWebFallback(true);
-      }
-    };
-    checkVoice();
-    
-    // Setup Native Voice if available
-    Voice.onSpeechStart = () => setIsListening(true);
-    Voice.onSpeechEnd = () => setIsListening(false);
-    Voice.onSpeechResults = (e) => {
-      if (e.value && e.value.length > 0) {
-        const text = e.value[0];
-        setTranscript(text);
-        processText(text);
-      }
-    };
-    Voice.onSpeechPartialResults = (e) => {
-      if (e.value && e.value.length > 0) {
-        setTranscript(e.value[0]);
-      }
-    };
-    Voice.onSpeechError = (e) => {
-      console.error(e);
-      setTranscript(`Native Error: ${e.error?.message || JSON.stringify(e)}`);
-      setIsListening(false);
-    };
-
     return () => {
-      Voice.destroy().then(Voice.removeAllListeners).catch(() => {});
+      if (recording) {
+        recording.stopAndUnloadAsync().catch(() => {});
+      }
     };
-  }, []);
+  }, [recording]);
 
   const processText = (text) => {
     const result = processSpeech(text);
@@ -64,126 +30,89 @@ export default function HomeScreen() {
     setSymbols(result.symbols);
   };
 
-  const handleMicPress = async () => {
-    // Request permission first
-    const { status } = await Audio.requestPermissionsAsync();
-    if (status !== 'granted') {
-      alert('Microphone permission is required to use EcoSense.');
-      return;
-    }
-
-    if (isListening) {
-      if (useWebFallback) {
-        webViewRef.current?.injectJavaScript(`stopListening(); true;`);
-        setIsListening(false);
-      } else {
-        try { await Voice.stop(); } catch (e) {}
+  const startRecording = async () => {
+    try {
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== 'granted') {
+        alert('Microphone permission is required to use EcoSense.');
+        return;
       }
-    } else {
-      setTranscript('');
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+
+      const { recording: newRecording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
+      
+      setRecording(newRecording);
+      setIsListening(true);
+      setTranscript('Listening...');
       setSummary('');
       setSymbols(null);
-      if (useWebFallback) {
-        setIsListening(true);
-        webViewRef.current?.injectJavaScript(`startListening(); true;`);
-      } else {
-        try {
-          await Voice.start('kn-IN'); 
-        } catch (e) {
-          console.error(e);
-          setTranscript(`Start Error: ${e.message}`);
-        }
-      }
+    } catch (err) {
+      console.error('Failed to start recording', err);
+      setTranscript(`Error: ${err.message}`);
+      setIsListening(false);
     }
   };
 
-  const onWebMessage = (event) => {
+  const stopRecording = async () => {
     try {
-      const data = JSON.parse(event.nativeEvent.data);
-      if (data.type === 'result') {
-        setTranscript(data.text);
-        processText(data.text);
-      } else if (data.type === 'partial') {
-        setTranscript(data.text);
-      } else if (data.type === 'end') {
-        setIsListening(false);
-      } else if (data.type === 'start') {
-        setIsListening(true);
-      } else if (data.type === 'error') {
-        setTranscript(`Web Error: ${data.error}`);
-        setIsListening(false);
+      if (!recording) return;
+
+      setIsListening(false);
+      setTranscript('Transcribing... Please wait.');
+
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+      setRecording(null);
+
+      const formData = new FormData();
+      formData.append('audio', {
+        uri: Platform.OS === 'android' ? uri : uri.replace('file://', ''),
+        type: 'audio/m4a',
+        name: 'recording.m4a'
+      });
+
+      const response = await fetch(BACKEND_URL, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      const result = await response.json();
+      
+      if (result.error) {
+        setTranscript(`Transcription failed: ${result.error}`);
+      } else {
+        const textToDisplay = result.text || 'No speech detected.';
+        setTranscript(textToDisplay);
+        if (result.text) {
+          processText(result.text);
+        }
       }
-    } catch(e) {}
+    } catch (err) {
+      console.error('Failed to stop recording or transcribe', err);
+      setTranscript(`Error: ${err.message}`);
+      setIsListening(false);
+    }
   };
 
-  const htmlContent = `
-    <html>
-      <body>
-        <script>
-          let recognition;
-          if ('webkitSpeechRecognition' in window) {
-            recognition = new webkitSpeechRecognition();
-            recognition.continuous = true;
-            recognition.interimResults = true;
-            
-            recognition.onstart = function() {
-              window.ReactNativeWebView.postMessage(JSON.stringify({type: 'start'}));
-            };
-            
-            recognition.onresult = function(event) {
-              let interim_transcript = '';
-              let final_transcript = '';
-              for (let i = event.resultIndex; i < event.results.length; ++i) {
-                if (event.results[i].isFinal) {
-                  final_transcript += event.results[i][0].transcript;
-                } else {
-                  interim_transcript += event.results[i][0].transcript;
-                }
-              }
-              if (final_transcript) {
-                window.ReactNativeWebView.postMessage(JSON.stringify({type: 'result', text: final_transcript}));
-              } else if (interim_transcript) {
-                window.ReactNativeWebView.postMessage(JSON.stringify({type: 'partial', text: interim_transcript}));
-              }
-            };
-            
-            recognition.onerror = function(event) {
-              window.ReactNativeWebView.postMessage(JSON.stringify({type: 'error', error: event.error}));
-            };
-            
-            recognition.onend = function() {
-              window.ReactNativeWebView.postMessage(JSON.stringify({type: 'end'}));
-            };
-          }
-          
-          function startListening() {
-            if (recognition) recognition.start();
-          }
-          
-          function stopListening() {
-            if (recognition) recognition.stop();
-          }
-        </script>
-      </body>
-    </html>
-  `;
+  const handleMicPress = () => {
+    if (isListening) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Hidden WebView for Web Speech API fallback on Expo Go */}
-      {useWebFallback && (
-         <View style={styles.hiddenWebview}>
-           <WebView 
-             ref={webViewRef}
-             source={{ html: htmlContent, baseUrl: 'https://localhost' }} 
-             onMessage={onWebMessage}
-             mediaPlaybackRequiresUserAction={false}
-             allowsInlineMediaPlayback={true}
-             javaScriptEnabled={true}
-           />
-         </View>
-      )}
-      
       <View style={styles.header}>
         <Text style={styles.title}>EcoSense</Text>
         <Text style={styles.subtitle}>Assistive Communication</Text>
@@ -194,9 +123,9 @@ export default function HomeScreen() {
           <ScrollView 
             style={styles.transcriptBox} 
             contentContainerStyle={styles.transcriptContent}
-            showsVerticalScrollIndicator={false}
+            showsVerticalScrollIndicator={true}
           >
-            <Text style={[styles.transcriptText, !transcript && styles.placeholderText]}>
+            <Text style={[styles.transcriptText, (transcript === 'Listening...' || transcript === 'Transcribing... Please wait.' || !transcript) && styles.placeholderText]}>
               {transcript || 'Tap the microphone and start speaking...'}
             </Text>
           </ScrollView>
@@ -204,11 +133,11 @@ export default function HomeScreen() {
 
         <View style={styles.summaryContainer}>
           <Text style={styles.summaryLabel}>SUMMARY</Text>
-          <View style={styles.summaryBox}>
+          <ScrollView style={styles.summaryBox} contentContainerStyle={styles.summaryContent}>
             <Text style={[styles.summaryText, !summary && styles.placeholderText]}>
               {summary || 'Summary will appear here.'}
             </Text>
-          </View>
+          </ScrollView>
         </View>
 
         <View style={styles.visualArea}>
@@ -226,12 +155,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-  },
-  hiddenWebview: {
-    height: 0, 
-    width: 0, 
-    opacity: 0, 
-    position: 'absolute'
   },
   header: {
     alignItems: 'center',
@@ -263,10 +186,10 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#EAF4FF',
     borderRadius: 16,
-    padding: 20,
   },
   transcriptContent: {
-    flexGrow: 1,
+    padding: 20,
+    paddingBottom: 40,
   },
   transcriptText: {
     fontSize: 24,
@@ -294,7 +217,10 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#E8F8F5',
     borderRadius: 12,
+  },
+  summaryContent: {
     padding: 16,
+    paddingBottom: 30,
     justifyContent: 'center',
   },
   summaryText: {
