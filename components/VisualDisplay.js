@@ -26,7 +26,13 @@ export default function VisualDisplay({ symbols }) {
   return (
     <View style={styles.container}>
       <Animated.View style={{ opacity: fadeAnim }}>
-        <Text style={styles.symbolsStyle}>{symbols}</Text>
+        <Text 
+           style={styles.symbolsStyle} 
+           adjustsFontSizeToFit={true} 
+           numberOfLines={1}
+        >
+          {symbols}
+        </Text>
       </Animated.View>
     </View>
   );
@@ -38,13 +44,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
+    width: '100%',
   },
   placeholderEmoji: {
-    fontSize: 80,
+    fontSize: 50,
     opacity: 0.1,
   },
   symbolsStyle: {
-    fontSize: 80,
+    fontSize: 45,
+    fontWeight: '700',
+    color: '#1a1a1a',
     textAlign: 'center',
     textShadowColor: 'rgba(0, 0, 0, 0.1)',
     textShadowOffset: { width: 0, height: 4 },

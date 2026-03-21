@@ -49,11 +49,19 @@ async function localFallbackSummarize(text, targetLanguage = 'English') {
     { t: ['bus', 'train', 'auto', 'rickshaw', 'travel'], i: 'Traveling', s: '🚌, Travel' }
   ];
 
+  // Filler stripping NLP algorithm
+  const fillers = ["uh", "um", "so", "like", "i", "was", "thinking", "maybe", "we", "could", "to", "the", "if", "you", "are", "and", "then", "this", "is", "of", "about", "it", "told", "a", "an", "that", "there", "their", "have", "had", "my", "me", "am", "but", "in", "on", "at", "end", "story", "wanted", "tell"];
+  let words = lower.split(/[^a-z0-9]/).filter(w => w.length > 0 && !fillers.includes(w));
+  if (words.length === 0) return { summary: 'Listening...', symbols: '' };
+
   let matchedIntent = null;
-  for (const item of INTENTS) {
-    if (item.t.some(trigger => lower.includes(trigger))) {
-      matchedIntent = item;
-      break;
+  // Deep protection: Only hijack via intents if the sentence is simple/short (<= 8 words)
+  if (words.length <= 8) {
+    for (const item of INTENTS) {
+      if (item.t.some(trigger => lower.includes(trigger))) {
+        matchedIntent = item;
+        break;
+      }
     }
   }
 
@@ -62,14 +70,8 @@ async function localFallbackSummarize(text, targetLanguage = 'English') {
     const finalTranslation = await translateText(coreSummary, targetLanguage);
     return { summary: finalTranslation, symbols: matchedIntent.s };
   }
-
-  // Filler stripping NLP algorithm
-  const fillers = ["uh", "um", "so", "like", "i", "was", "thinking", "maybe", "we", "could", "to", "the", "if", "you", "are", "and", "then", "this", "is", "of", "about", "it", "told", "a", "an", "that", "there", "their", "have", "had", "my", "me", "am", "but", "in", "on", "at", "end", "story", "wanted", "tell"];
   
-  let words = lower.split(/[^a-z0-9]/).filter(w => w.length > 0 && !fillers.includes(w));
-  if (words.length === 0) return { summary: 'Listening...', symbols: '' };
-  
-  const coreMeaning = words.slice(0, 5).join(' ');
+  const coreMeaning = words.slice(0, 10).join(' ');
   coreSummary = coreMeaning.charAt(0).toUpperCase() + coreMeaning.slice(1);
   const symbols = words.slice(0, 3).join(', ');
   
@@ -83,16 +85,20 @@ export async function processSpeech(text, targetLanguage = "English") {
   }
 
   const prompt = `
-You are a master deaf/mute accessibility interpreter. Analyze the English transcript.
+You are a real-time conversational interpreter for a Deaf/Mute user. The transcript you receive is someone speaking directly TO the deaf user. 
+There are two possibilities of context:
+1. Answering a Question: The speaker is answering a question the deaf user just asked (e.g., getting directions, explaining something).
+2. Initiating: The speaker is starting a new conversation with the user.
 
 Rules:
-1. Summary Quality: Extract the core meaning with extreme accuracy, clarity, and logical grammar. Summarize the transcript into a readable, highly optimized concise form without losing human meaning. (e.g. Instead of "I went to college yesterday after Breakfast" -> "Finished breakfast and went to college yesterday").
-2. Language Requirement: The summary output MUST be written natively in pure English. 
-3. Keyword Mapping: Pick the 2-3 most crucial physical concept nouns in English.
+1. Crisp & Grammatically Proper: Clean up the grammar and completely remove conversational fillers ("um", "so yeah", "like"), making it a straightforward, clear-cut version of what was strictly said.
+2. Preserve Vital Information: Do NOT completely modify or cut out details from the transcribed version. If the speaker is giving directions, locations, or answering a problem, every word is important. Keep the full structure intact, just shortened slightly by stripping the junk words.
+3. Language Requirement: The output MUST be written natively in pure, grammatically perfect English. 
+4. Keyword Mapping: Pick the 2-3 most crucial physical concept nouns/verbs in English for UI visual icons.
 
 Output EXACTLY this JSON schema:
 {
-  "summary": "<the pure English highly refined summary>",
+  "summary": "<the crisp, grammatically proper, straightforward English version>",
   "keywords": "word1, word2, word3"
 }
 
