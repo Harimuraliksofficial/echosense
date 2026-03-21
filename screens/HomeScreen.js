@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Platform, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Audio } from 'expo-av';
 import { Picker } from '@react-native-picker/picker';
@@ -7,10 +7,11 @@ import { Picker } from '@react-native-picker/picker';
 import { processSpeech } from '../utils/keywordLogic';
 import VisualDisplay from '../components/VisualDisplay';
 import MicButton from '../components/MicButton';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 const BACKEND_URL = "http://10.110.139.194:5000/transcribe";
 
-export default function HomeScreen() {
+export default function HomeScreen({ onNavigateToCanvas }) {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [summary, setSummary] = useState('');
@@ -173,7 +174,16 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      <MicButton isListening={isListening} onPress={handleMicPress} />
+      <View style={styles.bottomControls}>
+        <TouchableOpacity style={styles.canvasBtn} onPress={onNavigateToCanvas}>
+          <MaterialCommunityIcons name="pencil-outline" size={28} color="#222222" />
+        </TouchableOpacity>
+
+        <MicButton isListening={isListening} onPress={handleMicPress} />
+
+        {/* Placeholder to keep mic centered */}
+        <View style={styles.canvasBtnPlaceholder} />
+      </View>
       
     </SafeAreaView>
   );
@@ -281,5 +291,29 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#F0F0F0',
     overflow: 'hidden',
+  },
+  bottomControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingBottom: 10,
+  },
+  canvasBtn: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#EAF4FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 20,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  canvasBtnPlaceholder: {
+    width: 60,
+    marginLeft: 20,
   }
 });

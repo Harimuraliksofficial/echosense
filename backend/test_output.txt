@@ -1,0 +1,10 @@
+﻿
+--- Test 1 ---
+ORIGINAL:  Hello uh how are you actually I was telling like we should go to the market tomorrow at 10 o'clock because the vegetables are very cheap there and also we need to buy some rice and dal for the week no?
+CLEANED:   Hello how are you actually I was telling we should go to the market tomorrow at 10 o'clock because the vegetables are very cheap there and also we need to buy some rice and dal for the week no?
+Error: 'charmap' codec can't encode characters in position 12-14: character maps to <undefined>
+
+--- Test 2 ---
+ORIGINAL:  So basically you need to go straight uh turn left at the signal then take the second right after the temple and the shop is next to the big banyan tree on the left side you know
+CLEANED:   So basically you need to go straight turn left at the signal then take the second right after the temple and the shop is next to the big banyan tree on the left side you know
+Error: 'charmap' codec can't encode characters in position 12-19: character maps to <undefined>
