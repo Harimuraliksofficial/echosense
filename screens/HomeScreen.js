@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Audio } from 'expo-av';
+import { Picker } from '@react-native-picker/picker';
 
 import { processSpeech } from '../utils/keywordLogic';
 import VisualDisplay from '../components/VisualDisplay';
@@ -15,6 +16,7 @@ export default function HomeScreen() {
   const [summary, setSummary] = useState('');
   const [symbols, setSymbols] = useState(null);
   const [recording, setRecording] = useState(null);
+  const [selectedLanguage, setSelectedLanguage] = useState('English');
 
   useEffect(() => {
     return () => {
@@ -24,8 +26,21 @@ export default function HomeScreen() {
     };
   }, [recording]);
 
-  const processText = (text) => {
-    const result = processSpeech(text);
+  useEffect(() => {
+    let timeoutId;
+    if (transcript && transcript !== 'Listening...' && transcript !== 'Transcribing... Please wait.' && !transcript.startsWith('Error:') && !transcript.startsWith('Transcription failed')) {
+      timeoutId = setTimeout(() => {
+        processText(transcript);
+      }, 600); // Wait for the user to finish scrolling the language picker!
+    }
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [selectedLanguage]);
+
+  const processText = async (text) => {
+    setSummary('Translating...');
+    const result = await processSpeech(text, selectedLanguage);
     setSummary(result.summary);
     setSymbols(result.symbols);
   };
@@ -93,7 +108,7 @@ export default function HomeScreen() {
         const textToDisplay = result.text || 'No speech detected.';
         setTranscript(textToDisplay);
         if (result.text) {
-          processText(result.text);
+          await processText(result.text);
         }
       }
     } catch (err) {
@@ -132,7 +147,20 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.summaryContainer}>
-          <Text style={styles.summaryLabel}>SUMMARY</Text>
+          <View style={styles.summaryHeaderRow}>
+            <Text style={styles.summaryLabel}>SUMMARY ({selectedLanguage.toUpperCase()})</Text>
+            <View style={styles.pickerContainer}>
+              <Picker
+                selectedValue={selectedLanguage}
+                style={styles.picker}
+                onValueChange={(itemValue) => setSelectedLanguage(itemValue)}
+              >
+                {['English', 'Kannada', 'Malayalam', 'Telugu', 'Tamil', 'Hindi', 'Marathi', 'Gujarati', 'Bengali', 'Spanish'].map(lang => (
+                  <Picker.Item key={lang} label={lang} value={lang} />
+                ))}
+              </Picker>
+            </View>
+          </View>
           <ScrollView style={styles.summaryBox} contentContainerStyle={styles.summaryContent}>
             <Text style={[styles.summaryText, !summary && styles.placeholderText]}>
               {summary || 'Summary will appear here.'}
@@ -179,7 +207,7 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   transcriptContainer: {
-    flex: 2,
+    flex: 1.5,
     marginBottom: 20,
   },
   transcriptBox: {
@@ -202,16 +230,33 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   summaryContainer: {
-    flex: 1,
+    flex: 2.5,
     marginBottom: 20,
+  },
+  summaryHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
   },
   summaryLabel: {
     fontSize: 12,
     fontWeight: 'bold',
     color: '#888888',
     letterSpacing: 1,
-    marginBottom: 8,
     marginLeft: 4,
+  },
+  pickerContainer: {
+    width: 140,
+    height: 36,
+    justifyContent: 'center',
+    backgroundColor: '#F8F8F8',
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  picker: {
+    width: 140,
+    height: 36,
   },
   summaryBox: {
     flex: 1,
@@ -230,7 +275,7 @@ const styles = StyleSheet.create({
     lineHeight: 28,
   },
   visualArea: {
-    flex: 1.5,
+    flex: 1,
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     borderWidth: 1,
