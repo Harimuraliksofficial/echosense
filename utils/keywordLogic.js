@@ -1,4 +1,4 @@
-const BACKEND_URL = "http://10.110.139.194:5000/process";
+const BACKEND_URL = "http://10.77.236.194:5000/process";
 
 const langMap = {
   'english': null,
@@ -44,7 +44,10 @@ export async function processSpeech(text, targetLanguage = "English") {
     }
 
     const cleanedText = data.cleaned_text || text;
-    const finalSummary = data.translated_text || cleanedText;
+    // Use the AI-generated summary from the backend
+    const aiSummary = data.summary || cleanedText;
+    // If a translation was requested, show translated text; otherwise show the English AI summary
+    const finalSummary = data.translated_text || aiSummary;
     
     // Generate simple symbols from cleaned text words for the UI
     const lower = cleanedText.toLowerCase();

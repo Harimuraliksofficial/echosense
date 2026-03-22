@@ -1,0 +1,3 @@
+CLEANED: Hello how are you I was telling we should go to the market tomorrow at 10 o'clock because the vegetables are very cheap there and also we need to buy some rice and dal for the week.
+
+SUMMARY: We should go to the market tomorrow at 10 o'clock because the vegetables are very cheap there and also we need to buy some rice
