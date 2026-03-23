@@ -8,7 +8,7 @@ import { processSpeech } from '../utils/keywordLogic';
 import VisualDisplay from '../components/VisualDisplay';
 import MicButton from '../components/MicButton';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import nameListenerService from '../utils/NameListenerService';
+import { audioManager } from '../utils/AudioManager';
 
 const BACKEND_URL = "http://10.77.236.194:5000/transcribe";
 
@@ -58,16 +58,14 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub,
 
   const startRecording = async () => {
     try {
-      // 1. Tell App.js we are recording so it pauses NameListenerService
+      // 1. Tell App.js we are recording so it pauses other generic logic if any
       setIsListening(true);
       setTranscript('Preparing microphone...');
       
-      // 2. Force stop the name listener immediately so we don't have to wait for React state to propagate
-      if (activeNameListener) {
-        await nameListenerService.stop();
-        // Brief delay to ensure the OS releases the mic from the previous recording
-        await new Promise(resolve => setTimeout(resolve, 300));
-      }
+      // 2. Lock the mic using audioManager to pause the background NameListener
+      audioManager.lockMic();
+      // Brief delay to ensure the OS releases the mic from the previous recording
+      await new Promise(resolve => setTimeout(resolve, 800));
 
       const { status } = await Audio.requestPermissionsAsync();
       if (status !== 'granted') {
@@ -115,29 +113,49 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub,
         name: 'recording.m4a'
       });
 
-      const response = await fetch(BACKEND_URL, {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
+      // Implement an AbortController to prevent indefinite hanging (timeout after 15 seconds)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-      const result = await response.json();
-      
-      if (result.error) {
-        setTranscript(`Transcription failed: ${result.error}`);
-      } else {
-        const textToDisplay = result.text || 'No speech detected.';
-        setTranscript(textToDisplay);
-        if (result.text) {
-          await processText(result.text);
+      try {
+        const response = await fetch(BACKEND_URL, {
+          method: 'POST',
+          body: formData,
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+
+        const result = await response.json();
+        
+        if (result.error) {
+          setTranscript(`Transcription failed: ${result.error}`);
+        } else {
+          const textToDisplay = result.text || 'No speech detected.';
+          setTranscript(textToDisplay);
+          if (result.text) {
+            await processText(result.text);
+          }
+        }
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        if (fetchError.name === 'AbortError') {
+           setTranscript(`Network Timeout: Server took longer than 15s to respond.`);
+        } else {
+           setTranscript(`Network Error: Ensure your transcription server is running. (${fetchError.message})`);
         }
       }
+      
+      // Release mic so the active name listener can resume
+      audioManager.releaseMic();
     } catch (err) {
       console.error('Failed to stop recording or transcribe', err);
       setTranscript(`Error: ${err.message}`);
       setIsListening(false);
+      audioManager.releaseMic();
     }
   };
 
@@ -154,14 +172,6 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub,
       <View style={styles.header}>
         <Text style={styles.title}>EcoSense</Text>
         <Text style={styles.subtitle}>Assistive Communication</Text>
-        {activeNameListener && (
-          <TouchableOpacity 
-            style={styles.refreshBtn} 
-            onPress={() => nameListenerService.refresh()}
-          >
-            <MaterialCommunityIcons name="refresh" size={28} color="#222222" />
-          </TouchableOpacity>
-        )}
       </View>
 
       <View style={styles.mainContent}>

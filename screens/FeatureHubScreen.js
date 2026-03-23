@@ -8,7 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
-import nameListenerService from '../utils/NameListenerService';
+
 
 // Enable LayoutAnimation on Android (skip on New Architecture where it's a no-op)
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental && !global.__turboModuleProxy) {
@@ -48,7 +48,11 @@ const FeatureTile = React.memo(({ title, isActive, onToggle, onPress, disabled, 
   </View>
 ));
 
-export default function FeatureHubScreen({ onNavigateToHome, activeNameListener, onToggleNameListener, latestTranscript }) {
+export default function FeatureHubScreen({ 
+  onNavigateToHome, activeNameListener, onToggleNameListener, 
+  targetName, onSaveName,
+  latestTranscript, listenerState, matchStatus, lastTriggerTime, isListening, onRefreshListener 
+}) {
   const [expandedTile, setExpandedTile] = useState(null);
   
   // States
@@ -60,7 +64,6 @@ export default function FeatureHubScreen({ onNavigateToHome, activeNameListener,
   const [showReminderPicker, setShowReminderPicker] = useState(false);
   const [showReminderPopup, setShowReminderPopup] = useState(false);
 
-  const [targetName, setTargetName] = useState('');
   const [showNameModal, setShowNameModal] = useState(false);
   const [tempName, setTempName] = useState('');
 
@@ -107,9 +110,6 @@ export default function FeatureHubScreen({ onNavigateToHome, activeNameListener,
 
   const loadData = async () => {
     try {
-      const savedName = await AsyncStorage.getItem(TARGET_NAME_STORAGE_KEY);
-      if (savedName) setTargetName(savedName);
-
       const savedAlarm = await AsyncStorage.getItem(ALARM_STORAGE_KEY);
       if (savedAlarm) {
         const parsed = JSON.parse(savedAlarm);
@@ -125,26 +125,19 @@ export default function FeatureHubScreen({ onNavigateToHome, activeNameListener,
     }
   };
 
-  const handleSaveName = async () => {
-    const validName = tempName.trim();
+  const handleSaveName = (nameToSave) => {
+    const validName = nameToSave.trim();
     if (!validName) {
-      // User is clearing the name to reset it
-      setTargetName('');
-      try { await AsyncStorage.removeItem(TARGET_NAME_STORAGE_KEY); } catch(e) {}
+      onSaveName('');
+      onToggleNameListener(false);
       setShowNameModal(false);
-      onToggleNameListener(false); // turn off listener if there is no name
       toggleExpand(null);
       return;
     }
 
-    setTargetName(validName);
-    try {
-      await AsyncStorage.setItem(TARGET_NAME_STORAGE_KEY, validName);
-    } catch(e) {}
-    setShowNameModal(false);
-    
-    // Auto-enable after setting
+    onSaveName(validName);
     onToggleNameListener(true);
+    setShowNameModal(false);
     toggleExpand(null);
   };
 
@@ -230,7 +223,14 @@ export default function FeatureHubScreen({ onNavigateToHome, activeNameListener,
         <View style={{ width: 24 }} />
         <Text style={styles.title}>Customizable Pro Features</Text>
         {activeNameListener ? (
-          <TouchableOpacity onPress={() => nameListenerService.refresh()} style={{ width: 24, alignItems: 'center' }} activeOpacity={0.7}>
+          <TouchableOpacity 
+            onPress={() => {
+              onToggleNameListener(false);
+              setTimeout(() => onToggleNameListener(true), 500);
+            }} 
+            style={{ width: 24, alignItems: 'center' }} 
+            activeOpacity={0.7}
+          >
             <MaterialCommunityIcons name="refresh" size={26} color="#1A202C" />
           </TouchableOpacity>
         ) : (
@@ -244,13 +244,13 @@ export default function FeatureHubScreen({ onNavigateToHome, activeNameListener,
           title="Active Name Listener" 
           isActive={activeNameListener} 
           onToggle={() => {}} 
-          subtitle={activeNameListener ? 'Listening continuously' : 'Inactive'}
+          subtitle={activeNameListener ? (listenerState || 'Listening') : 'Inactive'}
           isExpanded={expandedTile === 'Active Name Listener'}
           onPressExpand={() => toggleExpand('Active Name Listener')}
         >
           <View style={styles.setupRow}>
             <View style={styles.timeSelectGroup}>
-               <Text style={styles.label}>Always On</Text>
+               <Text style={styles.label}>Master Switch</Text>
                <Text style={styles.timeText}>{activeNameListener ? 'Enabled' : 'Disabled'}</Text>
             </View>
             <View style={styles.switchGroup}>
@@ -258,11 +258,6 @@ export default function FeatureHubScreen({ onNavigateToHome, activeNameListener,
                <Switch 
                  value={activeNameListener} 
                  onValueChange={(val) => {
-                   if (val && !targetName) {
-                     setTempName('');
-                     setShowNameModal(true);
-                     return;
-                   }
                    onToggleNameListener(val);
                    if (val) toggleExpand(null);
                  }} 
@@ -271,24 +266,53 @@ export default function FeatureHubScreen({ onNavigateToHome, activeNameListener,
                />
             </View>
           </View>
-          <View style={[styles.setupRow, { marginTop: 8 }]}>
+
+          <TouchableOpacity 
+            style={[styles.setupRow, {marginTop: 10, borderTopWidth: 1, borderTopColor: '#F0F0F0', paddingTop: 10}]}
+            onPress={() => {
+              setTempName(targetName);
+              setShowNameModal(true);
+            }}
+          >
             <View style={styles.timeSelectGroup}>
                <Text style={styles.label}>Target Name</Text>
-               <Text style={[styles.timeText, { fontSize: 18 }]}>{targetName || 'Not Set'}</Text>
+               <Text style={styles.timeText}>{targetName || 'Hello'}</Text>
             </View>
-            <TouchableOpacity style={styles.testAudioBtn} onPress={() => { setTempName(targetName); setShowNameModal(true); }}>
-              <MaterialCommunityIcons name="pencil-outline" size={20} color="#06501A" />
-              <Text style={styles.testAudioText}>Change</Text>
-            </TouchableOpacity>
+            <MaterialCommunityIcons name="chevron-right" size={24} color="#CBD5E0" />
+          </TouchableOpacity>
+
+          {/* Confirmation Message */}
+          <View style={{marginTop: 12, backgroundColor: '#F0FDF4', padding: 12, borderRadius: 8}}>
+             <Text style={{color: '#166534', fontSize: 13, textAlign: 'center'}}>
+               Device will activate when it hears{' '}
+               <Text style={{fontWeight: 'bold'}}>"Hello"</Text>
+               {targetName ? <Text> or <Text style={{fontWeight: 'bold'}}>"Hello {targetName}"</Text></Text> : null}
+             </Text>
           </View>
 
           {activeNameListener && (
-            <View style={styles.debugTranscriptBox}>
-               <Text style={styles.debugTranscriptLabel}>Live Transcript (Debug)</Text>
-               <Text style={[styles.debugTranscriptText, !latestTranscript && styles.debugTranscriptItalic]}>
-                  {latestTranscript || 'Awaiting speech...'}
-               </Text>
-            </View>
+            <>
+              {/* Minimal Status */}
+              <View style={{marginTop: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}}>
+                <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                   <View style={{width: 8, height: 8, borderRadius: 4, backgroundColor: isListening ? '#10B981' : '#9CA3AF', marginRight: 8}} />
+                   <Text style={{color: '#4B5563', fontSize: 14}}>{listenerState || 'Idle'}</Text>
+                </View>
+                {matchStatus ? (
+                  <Text style={{color: '#DC2626', fontWeight: 'bold', fontSize: 14}}>{matchStatus}</Text>
+                ) : null}
+              </View>
+
+              {/* Refresh Button */}
+              <TouchableOpacity 
+                style={{marginTop: 12, backgroundColor: '#F3F4F6', padding: 12, borderRadius: 8, alignItems: 'center', flexDirection: 'row', justifyContent: 'center'}}
+                onPress={onRefreshListener}
+                activeOpacity={0.7}
+              >
+                <MaterialCommunityIcons name="refresh" size={18} color="#374151" style={{marginRight: 6}} />
+                <Text style={{color: '#374151', fontWeight: '600', fontSize: 14}}>Refresh Listener</Text>
+              </TouchableOpacity>
+            </>
           )}
         </FeatureTile>
 
@@ -432,7 +456,7 @@ export default function FeatureHubScreen({ onNavigateToHome, activeNameListener,
                <TouchableOpacity style={[styles.stopButton, {backgroundColor: '#F3F4F6', flex: 1, marginRight: 10}]} onPress={() => setShowNameModal(false)}>
                  <Text style={[styles.stopButtonText, {color: '#6B7280'}]}>Cancel</Text>
                </TouchableOpacity>
-               <TouchableOpacity style={[styles.stopButton, {backgroundColor: '#DBEAFE', flex: 1}]} onPress={handleSaveName}>
+               <TouchableOpacity style={[styles.stopButton, {backgroundColor: '#DBEAFE', flex: 1}]} onPress={() => handleSaveName(tempName)}>
                  <Text style={[styles.stopButtonText, {color: '#1D4ED8'}]}>Save Name</Text>
                </TouchableOpacity>
             </View>

@@ -9,7 +9,7 @@ LogBox.ignoreLogs([
   '[expo-av]',
   'setLayoutAnimationEnabledExperimental',
 ]);
-import NameListenerService, { setNameListenerCallbacks } from './utils/NameListenerService';
+import { useNameListener } from './hooks/useNameListener';
 import HomeScreen from './screens/HomeScreen';
 import CanvasScreen from './screens/CanvasScreen';
 import FeatureHubScreen from './screens/FeatureHubScreen';
@@ -21,48 +21,59 @@ export default function App() {
 
   const [activeNameListener, setActiveNameListener] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const [matchAlertVisible, setMatchAlertVisible] = useState(false);
-  const [listenerState, setListenerState] = useState('Inactive');
-  const [latestTranscript, setLatestTranscript] = useState('');
+  
+  const [targetName, setTargetName] = useState('Hari');
+  
+  const {
+    startListening,
+    stopListening,
+    refreshListener,
+    listenerState,
+    latestTranscript,
+    matchStatus,
+    lastTriggerTime,
+    isListening,
+  } = useNameListener(targetName);
 
   useEffect(() => {
-    // NOTE: Do NOT initialize Audio.setAudioModeAsync here at startup.
-    // It conflicts with @react-native-voice/voice mic access.
-    // Audio mode is set dynamically by NameListenerService when needed.
-
     const loadState = async () => {
       try {
+        const savedName = await AsyncStorage.getItem('@ecosense_targetname');
+        if (savedName) setTargetName(savedName);
+
         const saved = await AsyncStorage.getItem('@ecosense_namelistener');
-        if (saved !== null) setActiveNameListener(JSON.parse(saved));
+        if (saved !== null) {
+            const isActive = JSON.parse(saved);
+            setActiveNameListener(isActive);
+            if (isActive) {
+               // Must be done in next tick to avoid calling start logic before hook is fully ready
+               setTimeout(startListening, 500);
+            }
+        }
       } catch (e) {
         console.log("Error loading name listener state", e);
       }
     };
     loadState();
-
-    setNameListenerCallbacks(
-      (state) => setListenerState(state),
-      () => {
-        setMatchAlertVisible(true);
-        // Auto-hide alert after 10 seconds
-        setTimeout(() => setMatchAlertVisible(false), 10000);
-      },
-      (text) => setLatestTranscript(text)
-    );
   }, []);
-
-  useEffect(() => {
-    if (activeNameListener && !isTranscribing) {
-      NameListenerService.start();
-    } else {
-      NameListenerService.stop();
-    }
-  }, [activeNameListener, isTranscribing]);
 
   const handleToggleNameListener = async (val) => {
     setActiveNameListener(val);
     try {
       await AsyncStorage.setItem('@ecosense_namelistener', JSON.stringify(val));
+    } catch (e) {}
+    if (val) startListening();
+    else stopListening();
+  };
+
+  const handleSaveName = async (newName) => {
+    setTargetName(newName);
+    try {
+      if (newName) {
+        await AsyncStorage.setItem('@ecosense_targetname', newName);
+      } else {
+        await AsyncStorage.removeItem('@ecosense_targetname');
+      }
     } catch (e) {}
   };
 
@@ -123,33 +134,26 @@ export default function App() {
                onNavigateToHome={navigateToHome} 
                activeNameListener={activeNameListener}
                onToggleNameListener={handleToggleNameListener}
+               targetName={targetName}
+               onSaveName={handleSaveName}
                latestTranscript={latestTranscript}
+               listenerState={listenerState}
+               matchStatus={matchStatus}
+               lastTriggerTime={lastTriggerTime}
+               isListening={isListening}
+               onRefreshListener={refreshListener}
             />
           </View>
         </Animated.View>
 
         {/* Global Listener Indicator (Top) */}
-        {activeNameListener && listenerState !== 'Inactive' && (
+        {activeNameListener && listenerState !== 'Inactive' && listenerState !== 'Paused' && (
           <View style={styles.listenerIndicator}>
             <Text style={styles.listenerIndicatorText}>{listenerState}</Text>
           </View>
         )}
 
-        {/* Global Match Alert (Center) */}
-        {matchAlertVisible && (
-          <View style={[StyleSheet.absoluteFillObject, styles.alertOverlay]}>
-            <View style={styles.alertBox}>
-               <Text style={styles.alertTitle}>Someone is calling you!</Text>
-               <Text style={styles.alertDesc}>Please turn back and check.</Text>
-               <TouchableOpacity 
-                  onPress={() => setMatchAlertVisible(false)} 
-                  style={styles.alertBtn}
-               >
-                  <Text style={styles.alertBtnText}>Dismiss</Text>
-               </TouchableOpacity>
-            </View>
-          </View>
-        )}
+        {/* Global Match Alert (Center) removed for full screen debug panel */}
       </View>
     </SafeAreaProvider>
   );
