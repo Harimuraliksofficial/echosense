@@ -32,6 +32,8 @@ export default function CanvasScreen({ onNavigateToHome }) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedImage, setGeneratedImage] = useState(null);
   const [recognizedKeyword, setRecognizedKeyword] = useState(null);
+  const [isFetchingArasaac, setIsFetchingArasaac] = useState(false);
+  const [arasaacError, setArasaacError] = useState(false);
   
   const [modelStatus, setModelStatus] = useState('checking'); // 'checking', 'ready', 'error'
   const abortControllerRef = useRef(null);
@@ -125,6 +127,8 @@ export default function CanvasScreen({ onNavigateToHome }) {
     setCurrentPath('');
     setGeneratedImage(null);
     setRecognizedKeyword(null);
+    setArasaacError(false);
+    setIsFetchingArasaac(false);
     setShowClearModal(false);
   };
 
@@ -133,6 +137,8 @@ export default function CanvasScreen({ onNavigateToHome }) {
     setCurrentPath('');
     setGeneratedImage(null);
     setRecognizedKeyword(null);
+    setArasaacError(false);
+    setIsFetchingArasaac(false);
   };
 
   const cycleStrokeSize = () => {
@@ -177,8 +183,13 @@ export default function CanvasScreen({ onNavigateToHome }) {
       
       if (data.keyword) {
          setRecognizedKeyword(data.keyword);
+         setPaths([]); // Clear drawing instantly
+         setIsGenerating(false); // Stop Qwen loading immediately
          
-         // Fetch ARASAAC pictogram
+         setIsFetchingArasaac(true);
+         setArasaacError(false);
+         
+         // Fetch ARASAAC pictogram in background
          try {
              const arasaacRes = await fetch(`https://api.arasaac.org/v1/pictograms/en/bestsearch/${encodeURIComponent(data.keyword)}`);
              if (!arasaacRes.ok) throw new Error("ARASAAC API failed");
@@ -186,12 +197,13 @@ export default function CanvasScreen({ onNavigateToHome }) {
              if (arasaacData && arasaacData.length > 0) {
                  const id = arasaacData[0]._id;
                  setGeneratedImage(`https://static.arasaac.org/pictograms/${id}/${id}_500.png`);
-                 setPaths([]); // Clear drawing
              } else {
-                 Alert.alert("Not Found", `Recognized as "${data.keyword}" but no ARASAAC image found.`);
+                 setArasaacError(true);
              }
          } catch (err) {
-             Alert.alert("Network Error", "Could not fetch the ARASAAC pictogram.");
+             setArasaacError(true);
+         } finally {
+             setIsFetchingArasaac(false);
          }
       } else {
          console.error('Error generating image', data.error);
@@ -330,6 +342,17 @@ export default function CanvasScreen({ onNavigateToHome }) {
 
             {/* SVG Canvas */}
             <View style={styles.svgContainer} {...panResponder.panHandlers} ref={captureViewRef}>
+              {recognizedKeyword && (
+                <View style={styles.keywordBanner}>
+                  <Text style={styles.keywordText}>{recognizedKeyword.toUpperCase()}</Text>
+                  {isFetchingArasaac && <ActivityIndicator size="small" color="#4A7C6F" style={{marginLeft: 10}} />}
+                </View>
+              )}
+              {recognizedKeyword && arasaacError && (
+                <View style={styles.errorBanner}>
+                  <Text style={styles.errorText}>ARASAAC image unavailable</Text>
+                </View>
+              )}
               {generatedImage && (
                 <Animated.View style={[StyleSheet.absoluteFill, { 
                     justifyContent: 'center', 
@@ -346,11 +369,6 @@ export default function CanvasScreen({ onNavigateToHome }) {
                     style={{ width: '80%', height: '80%' }} 
                     resizeMode="contain" 
                   />
-                  {recognizedKeyword && (
-                    <Text style={{ position: 'absolute', bottom: 20, fontSize: 24, fontWeight: 'bold', color: '#222' }}>
-                      {recognizedKeyword.toUpperCase()}
-                    </Text>
-                  )}
                 </Animated.View>
               )}
               <Svg style={StyleSheet.absoluteFill}>
@@ -647,18 +665,58 @@ const styles = StyleSheet.create({
   loadingBox: {
     backgroundColor: '#FFFFFF',
     padding: 24,
-    borderRadius: 20,
+    borderRadius: 16,
     alignItems: 'center',
-    elevation: 5,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
   },
   loadingText: {
     marginTop: 16,
     fontSize: 16,
-    color: '#222',
-    fontWeight: '500',
-  }
+    color: '#333',
+    fontWeight: '600',
+  },
+  keywordBanner: {
+    position: 'absolute',
+    top: 20,
+    alignSelf: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 20,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+  },
+  keywordText: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#333',
+    letterSpacing: 1.5,
+  },
+  errorBanner: {
+    position: 'absolute',
+    top: 80,
+    alignSelf: 'center',
+    backgroundColor: '#FFF0F0',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 6,
+    alignItems: 'center',
+    zIndex: 20,
+    elevation: 10,
+  },
+  errorText: {
+    color: '#D4726A',
+    fontWeight: '600',
+    fontSize: 14,
+  },
 });
