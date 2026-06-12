@@ -73,6 +73,7 @@ export default function App() {
              <HomeScreen 
                onNavigateToCanvas={navigateToCanvas} 
                onNavigateToQuickHelp={navigateToQuickHelp}
+               onNavigateToHistory={navigateToHistory}
              />
           </View>
 

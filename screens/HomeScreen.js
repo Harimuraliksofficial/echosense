@@ -95,18 +95,18 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToQuickHelp, 
         }
       }
       setSymbols(result.symbols);
-      
-      // Save to Conversation History (Fire and forget)
-      if (result.summary && result.summary.trim()) {
-         fetch(`${BACKEND_BASE_URL}/api/history`, {
-             method: 'POST',
-             headers: { 'Content-Type': 'application/json' },
-             body: JSON.stringify({
-                 message: lang === 'English' ? result.summary : text,
-                 keywords: result.symbols || []
-             })
-         }).catch(err => console.warn('Failed to save history in background', err));
+
+      // Save history in background
+      const finalMsg = lang === 'English' ? text : result.summary;
+      const kwString = result.symbols ? result.symbols.join(', ') : '';
+      if (finalMsg && !finalMsg.startsWith('[Translation Error]')) {
+        fetch(`${BACKEND_BASE_URL}/api/history`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: finalMsg, keywords: kwString })
+        }).catch(e => console.warn('History save failed', e));
       }
+
     } catch (err) {
       if (err.name === 'AbortError') {
         console.log("processText aborted");
@@ -240,8 +240,10 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToQuickHelp, 
       <View style={styles.header}>
         <Text style={styles.title}>EcoSense</Text>
         <Text style={styles.subtitle}>Assistive Communication</Text>
-        {/* Ollama API health dot — top-right corner */}
-        <View style={styles.statusIndicatorContainer}>
+        <View style={styles.topRightControls}>
+          <TouchableOpacity onPress={onNavigateToHistory} style={styles.historyBtn} activeOpacity={0.7}>
+            <MaterialCommunityIcons name="history" size={26} color="#666" />
+          </TouchableOpacity>
           <ApiStatusIndicator />
         </View>
       </View>
@@ -330,8 +332,12 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToQuickHelp, 
 
       <View style={styles.bottomControls}>
         <View style={styles.sideControlContainer}>
-          <TouchableOpacity style={styles.historyBtn} onPress={onNavigateToHistory} activeOpacity={0.7}>
-            <MaterialCommunityIcons name="history" size={28} color="#222222" />
+          <TouchableOpacity 
+            style={styles.canvasBtn} 
+            onPress={onNavigateToCanvas}
+            activeOpacity={0.7}
+          >
+            <MaterialCommunityIcons name="pencil-outline" size={28} color="#222222" />
           </TouchableOpacity>
         </View>
 
@@ -361,11 +367,16 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F0F0F0',
     position: 'relative',
   },
-  statusIndicatorContainer: {
+  topRightControls: {
     position: 'absolute',
     right: 16,
     top: '50%',
     transform: [{ translateY: -14 }],
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  historyBtn: {
+    marginRight: 12,
   },
   title: {
     fontSize: 28,
@@ -524,7 +535,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  historyBtn: {
+  canvasBtn: {
     width: 60,
     height: 60,
     borderRadius: 30,

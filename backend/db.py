@@ -35,16 +35,16 @@ def init_db():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
-            # New table for Conversation History
+            # Table for Conversation History
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    message_text TEXT NOT NULL,
-                    keywords_json TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    keywords TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
-    print("[DB] Database initialized (generations + keywords tables ready).")
+    print("[DB] Database initialized (generations, keywords, history tables ready).")
 
 # ── Generations (Segmind image generation) ─────────────────────────────────
 
@@ -141,41 +141,29 @@ def get_keywords_by_id(record_id: int) -> dict | None:
 
 # ── Conversation History ────────────────────────────────────────────────────
 
-def save_history(message_text: str, keywords_list: list) -> int:
-    keywords_json = json.dumps(keywords_list, ensure_ascii=False)
+def save_history(message: str, keywords: str) -> None:
+    """Save conversation history and clear records older than 24 hours."""
     with contextlib.closing(get_db_connection()) as conn:
         with conn:
-            cursor = conn.execute(
-                'INSERT INTO history (message_text, keywords_json) VALUES (?, ?)',
-                (message_text, keywords_json)
+            # Delete records older than 24 hours
+            conn.execute("DELETE FROM history WHERE created_at <= datetime('now', '-1 day')")
+            # Insert new record
+            conn.execute(
+                'INSERT INTO history (message, keywords) VALUES (?, ?)',
+                (message, keywords)
             )
-            return cursor.lastrowid
 
 def get_history() -> list:
     """Retrieve history from the last 24 hours."""
     with contextlib.closing(get_db_connection()) as conn:
         rows = conn.execute(
-            "SELECT id, message_text, keywords_json, created_at "
-            "FROM history WHERE created_at >= datetime('now', '-1 day') "
-            "ORDER BY created_at DESC"
+            "SELECT id, message, keywords, created_at FROM history WHERE created_at > datetime('now', '-1 day') ORDER BY created_at DESC"
         ).fetchall()
     
-    result = []
-    for row in rows:
-        try:
-            kw = json.loads(row['keywords_json'])
-        except (json.JSONDecodeError, TypeError):
-            kw = []
-        result.append({
-            'id': row['id'],
-            'message_text': row['message_text'],
-            'keywords': kw,
-            'created_at': row['created_at'],
-        })
-    return result
+    return [dict(row) for row in rows]
 
-def clear_history():
-    """Clear all records from the history table."""
+def clear_history() -> None:
+    """Clear all history records."""
     with contextlib.closing(get_db_connection()) as conn:
         with conn:
             conn.execute('DELETE FROM history')

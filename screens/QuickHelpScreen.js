@@ -193,45 +193,33 @@ export default function QuickHelpScreen({ onNavigateToHome }) {
         </TouchableOpacity>
       </View>
 
-      {/* ── Display Modal (Full-Screen Communication Mode) ── */}
-      <Modal visible={showDisplayModal} animationType="fade" transparent={false} onRequestClose={() => setShowDisplayModal(false)}>
-        <SafeAreaView style={styles.fullScreenContainer}>
-          <View style={styles.fullScreenContent}>
-            {/* Top Section */}
-            <View style={styles.fullScreenImageContainer}>
+      {/* ── Display Modal ── */}
+      <Modal visible={showDisplayModal} animationType="fade" transparent={true}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.displayModalContent}>
+            <TouchableOpacity style={styles.closeDisplayBtn} onPress={() => setShowDisplayModal(false)}>
+              <MaterialCommunityIcons name="close" size={30} color="#666" />
+            </TouchableOpacity>
+
+            <View style={styles.imageContainer}>
               {isFetchingImage ? (
                 <ActivityIndicator size="large" color="#4A7C6F" />
               ) : displayImage ? (
                 <Animated.Image 
                   source={{ uri: displayImage }} 
-                  style={[styles.arasaacImageFS, { opacity: fadeAnim }]} 
+                  style={[styles.arasaacImage, { opacity: fadeAnim }]} 
                   resizeMode="contain" 
                 />
               ) : (
-                <MaterialCommunityIcons name={activeCard?.icon || "image-off-outline"} size={140} color="#4A7C6F" />
+                <MaterialCommunityIcons name="image-off-outline" size={80} color="#E0E0E0" />
               )}
             </View>
 
-            {/* Middle Section */}
-            <View style={styles.fullScreenMessageContainer}>
-              <Text style={styles.fullScreenMessage}>{activeCard?.message?.toUpperCase()}</Text>
+            <View style={styles.messageBox}>
+              <Text style={styles.displayMessage}>{activeCard?.message}</Text>
             </View>
           </View>
-
-          {/* Bottom Section */}
-          <View style={styles.fullScreenControls}>
-            <TouchableOpacity style={styles.fullScreenBtn} onPress={() => setShowDisplayModal(false)} activeOpacity={0.8}>
-              <MaterialCommunityIcons name="arrow-left" size={36} color="#FFFFFF" />
-            </TouchableOpacity>
-            
-            <TouchableOpacity style={[styles.fullScreenBtn, { backgroundColor: '#1E1E1E' }]} onPress={() => {
-                setShowDisplayModal(false);
-                onNavigateToHome();
-              }} activeOpacity={0.8}>
-              <MaterialCommunityIcons name="home-outline" size={36} color="#FFFFFF" />
-            </TouchableOpacity>
-          </View>
-        </SafeAreaView>
+        </View>
       </Modal>
 
       {/* ── Add / Edit Modal ── */}
@@ -398,62 +386,51 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  fullScreenContainer: {
-    flex: 1,
+  displayModalContent: {
+    width: '85%',
     backgroundColor: '#FFFFFF',
-  },
-  fullScreenContent: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+    borderRadius: 24,
     padding: 30,
+    alignItems: 'center',
+    position: 'relative',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.2,
+    shadowRadius: 20,
+    elevation: 10,
   },
-  fullScreenImageContainer: {
-    flex: 1,
-    width: '100%',
+  closeDisplayBtn: {
+    position: 'absolute',
+    top: 15,
+    right: 15,
+    zIndex: 10,
+  },
+  imageContainer: {
+    width: 200,
+    height: 200,
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 20,
+    marginBottom: 24,
+    marginTop: 10,
   },
-  arasaacImageFS: {
+  arasaacImage: {
     width: '100%',
     height: '100%',
-    maxHeight: 280,
   },
-  fullScreenMessageContainer: {
-    flex: 1.5,
+  messageBox: {
+    backgroundColor: '#F8F9FA',
     width: '100%',
-    justifyContent: 'center',
-    alignItems: 'center',
+    padding: 20,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#EEEEEE',
   },
-  fullScreenMessage: {
-    fontSize: Dimensions.get('window').width > 400 ? 54 : 44,
-    fontWeight: '900',
-    color: '#111111',
+  displayMessage: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#222',
     textAlign: 'center',
-    lineHeight: Dimensions.get('window').width > 400 ? 64 : 54,
-    textTransform: 'uppercase',
-  },
-  fullScreenControls: {
-    flexDirection: 'row',
-    justifyContent: 'space-evenly',
-    alignItems: 'center',
-    paddingVertical: 30,
-    paddingHorizontal: 20,
-    backgroundColor: '#FFFFFF',
-  },
-  fullScreenBtn: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#4A7C6F',
-    justifyContent: 'center',
-    alignItems: 'center',
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
+    lineHeight: 30,
   },
   
   editModalContent: {

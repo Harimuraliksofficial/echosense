@@ -173,44 +173,31 @@ def clear_history_route():
     return jsonify({"status": "cleared"})
 
 @app.route('/api/cancel-session', methods=['POST'])
-def cancel_session_route():
+def cancel_session():
     new_id = increment_session_id()
-    return jsonify({"status": "cancelled", "session_id": new_id})
+    return jsonify({"status": "session cancelled", "session_id": new_id})
 
-# ── Conversation History ────────────────────────────────────────────────────
-
-@app.route('/api/history', methods=['GET'])
-def fetch_history():
-    try:
-        history = get_history()
-        return jsonify({"history": history})
-    except Exception as e:
-        logger.error(f"[get_history] Error: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+# ── Conversation History Routes ─────────────────────────────────────────────
 
 @app.route('/api/history', methods=['POST'])
-def add_history():
+def api_save_history():
     data = request.json
-    if not data or 'message' not in data:
-        return jsonify({'error': 'Missing message'}), 400
-        
-    try:
-        message_text = data['message']
-        keywords = data.get('keywords', [])
-        row_id = save_history(message_text, keywords)
-        return jsonify({"status": "success", "id": row_id})
-    except Exception as e:
-        logger.error(f"[save_history] Error: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+    message = data.get('message', '')
+    keywords = data.get('keywords', '')
+    if message:
+        save_history(message, keywords)
+    return jsonify({"status": "saved"}), 200
+
+@app.route('/api/history', methods=['GET'])
+def api_get_history():
+    records = get_history()
+    return jsonify(records), 200
 
 @app.route('/api/history', methods=['DELETE'])
-def remove_history():
-    try:
-        clear_history()
-        return jsonify({"status": "cleared"})
-    except Exception as e:
-        logger.error(f"[clear_history] Error: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+def api_clear_history():
+    clear_history()
+    return jsonify({"status": "cleared"}), 200
+
 
 @app.route('/api/generate-image', methods=['POST'])
 def generate_image():
