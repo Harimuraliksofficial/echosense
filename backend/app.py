@@ -56,8 +56,8 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 # Format: {"timestamp": float, "text": str}
 conversation_history = []
 
-logger.info("Loading Faster-Whisper model (large-v3) in float32...")
-whisper_model = WhisperModel("large-v3", device="cpu", compute_type="float32")
+logger.info("Loading Faster-Whisper model (small) in float32...")
+whisper_model = WhisperModel("small", device="cpu", compute_type="float32")
 logger.info("Faster-Whisper model loaded successfully.")
 
 # Visual Assist Keywords
