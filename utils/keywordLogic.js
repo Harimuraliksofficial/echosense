@@ -13,24 +13,29 @@ const langMap = {
   'urdu': 'ur',
 };
 
-export async function processSpeech(text, targetLanguage = "English") {
+export async function processSpeech(text, targetLanguage = "English", sessionId = 0, signal = null) {
   if (!text || text.trim().length < 2) {
     return { summary: 'Listening...', symbols: '' };
   }
 
   const code = langMap[targetLanguage.toLowerCase()];
   
-  const payload = { text };
+  const payload = { text, session_id: sessionId };
   if (code) {
     payload.target_lang = code;
   }
 
   try {
-    const response = await fetch(BASE_URL, {
+    const fetchOptions = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
-    });
+    };
+    if (signal) {
+      fetchOptions.signal = signal;
+    }
+    
+    const response = await fetch(BASE_URL, fetchOptions);
     
     if (!response.ok) {
         throw new Error(`API HTTP Error ${response.status}`);

@@ -23,11 +23,12 @@ const KEYWORDS_ENDPOINT = `${BACKEND_BASE_URL}/api/extract-keywords`;
  * Fetch keywords from the local Mistral model via the Flask backend.
  * Returns an array of keyword strings.
  */
-const fetchOllamaKeywords = async (text) => {
+const fetchOllamaKeywords = async (text, signal) => {
   const response = await fetch(KEYWORDS_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text }),
+    signal
   });
 
   if (!response.ok) {
@@ -68,6 +69,8 @@ export default function VisualDisplay({ transcript }) {
       return;
     }
 
+    const controller = new AbortController();
+    
     const timeoutId = setTimeout(async () => {
       lastProcessedText.current = transcript;
       setLoading(true);
@@ -75,7 +78,9 @@ export default function VisualDisplay({ transcript }) {
 
       try {
         // Step 1: Extract keywords via Ollama Mistral (through Flask backend)
-        const keywords = await fetchOllamaKeywords(transcript);
+        const keywords = await fetchOllamaKeywords(transcript, controller.signal);
+
+        if (controller.signal.aborted) return;
 
         if (!keywords || keywords.length === 0) {
           setImages([]);
@@ -86,12 +91,15 @@ export default function VisualDisplay({ transcript }) {
         // Step 2: Fetch ARASAAC pictograms for each keyword
         const newImages = [];
         for (const kw of keywords) {
+          if (controller.signal.aborted) return;
           try {
             const response = await fetch(
-              `https://api.arasaac.org/v1/pictograms/en/bestsearch/${encodeURIComponent(kw)}`
+              `https://api.arasaac.org/v1/pictograms/en/bestsearch/${encodeURIComponent(kw)}`,
+              { signal: controller.signal }
             );
             if (response.ok) {
               const data = await response.json();
+              if (controller.signal.aborted) return;
               if (data && data.length > 0) {
                 const id = data[0]._id;
                 newImages.push({
@@ -101,21 +109,29 @@ export default function VisualDisplay({ transcript }) {
               }
             }
           } catch (pictoErr) {
+            if (pictoErr.name === 'AbortError') return;
             // If one pictogram fails, continue with the rest
             console.warn(`[VisualDisplay] Pictogram fetch failed for "${kw}":`, pictoErr.message);
           }
         }
-
+        
+        if (controller.signal.aborted) return;
         setImages(newImages);
       } catch (err) {
+        if (err.name === 'AbortError') return;
         console.error('[VisualDisplay] Keyword extraction failed:', err);
         setError(err.message || 'Failed to extract keywords from transcript.');
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
       }
     }, 50);
 
-    return () => clearTimeout(timeoutId);
+    return () => {
+      clearTimeout(timeoutId);
+      controller.abort();
+    };
   }, [transcript]);
 
   useEffect(() => {

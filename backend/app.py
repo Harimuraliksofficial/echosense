@@ -22,6 +22,7 @@ from services.aiService import (
     extract_keywords,
     check_ollama_health,
     process_text_with_mistral,
+    increment_session_id,
 )
 
 warnings.filterwarnings("ignore")
@@ -131,7 +132,7 @@ def transcribe_audio():
         
         segments, _ = whisper_model.transcribe(
             processed_filepath,
-            task="translate",
+            task="transcribe",
             beam_size=5,
             temperature=0.0,
             condition_on_previous_text=False,
@@ -157,11 +158,12 @@ def process_text():
         
     text = data['text']
     target_lang = data.get('target_lang')  # e.g. "hi", "kn", "ml", "ta", "te", "ur", or None
+    session_id = data.get('session_id', 0)
 
     # ── Primary pipeline: Mistral (grammar + translation + keywords in one call) ──
     try:
         mistral_lang = target_lang if target_lang else "english"
-        mistral_result = process_text_with_mistral(text, mistral_lang)
+        mistral_result = process_text_with_mistral(text, mistral_lang, session_id)
 
         cleaned_text = mistral_result.get("english_text", text)
         translated_text = mistral_result.get("translated_text", "")
@@ -213,6 +215,11 @@ def clear_history_route():
     conversation_history = []
     return jsonify({"status": "cleared"})
 
+@app.route('/api/cancel-session', methods=['POST'])
+def cancel_session_route():
+    new_id = increment_session_id()
+    return jsonify({"status": "cancelled", "session_id": new_id})
+
 
 @app.route('/api/generate-image', methods=['POST'])
 def generate_image():
@@ -256,17 +263,14 @@ def api_extract_keywords():
         return jsonify({'error': 'Text cannot be empty'}), 400
 
     try:
-        keywords = extract_keywords(text)
+        keywords = extract_symbols(text)
         row_id = save_keywords(text, keywords)
-        logger.info(f"[extract-keywords] text={text[:60]!r} → keywords={keywords}")
+        logger.info(f"[extract-keywords] text={text[:60]!r} → keywords={keywords} (fast extraction)")
         return jsonify({
             "keywords": keywords,
             "id": row_id,
             "source_text": text,
         })
-    except RuntimeError as e:
-        logger.error(f"[extract-keywords] Ollama error: {e}")
-        return jsonify({"error": str(e)}), 503
     except Exception as e:
         logger.error(f"[extract-keywords] Unexpected error: {e}", exc_info=True)
         return jsonify({"error": f"Keyword extraction failed: {str(e)}"}), 500

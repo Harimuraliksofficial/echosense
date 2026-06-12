@@ -25,6 +25,16 @@ def _safe_print(msg: str):
     except Exception:
         pass
 
+CURRENT_SESSION_ID = 0
+
+def increment_session_id():
+    global CURRENT_SESSION_ID
+    CURRENT_SESSION_ID += 1
+    return CURRENT_SESSION_ID
+
+def get_current_session_id():
+    return CURRENT_SESSION_ID
+
 # Load .env from the backend directory
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"))
 
@@ -297,7 +307,7 @@ Input: "{text}" (target: {target_language})
 Output:"""
 
 
-def process_text_with_mistral(text: str, target_lang: str = "english") -> dict:
+def process_text_with_mistral(text: str, target_lang: str = "english", request_session_id: int = 0) -> dict:
     """
     Use the local Mistral model (via Ollama) to perform grammar correction,
     translation, and English keyword extraction in a single request.
@@ -341,7 +351,7 @@ def process_text_with_mistral(text: str, target_lang: str = "english") -> dict:
     payload = {
         "model": OLLAMA_MODEL,
         "prompt": prompt,
-        "stream": False,
+        "stream": True,
         "options": {
             "temperature": 0.3,
             "num_predict": 1024,
@@ -352,6 +362,7 @@ def process_text_with_mistral(text: str, target_lang: str = "english") -> dict:
         response = requests.post(
             f"{OLLAMA_BASE_URL}/api/generate",
             json=payload,
+            stream=True,
             timeout=90,
         )
     except requests.exceptions.ConnectionError as exc:
@@ -362,8 +373,18 @@ def process_text_with_mistral(text: str, target_lang: str = "english") -> dict:
             f"Ollama API error ({response.status_code}): {response.text[:300]}"
         )
 
-    data = response.json()
-    raw_response = data.get("response", "").strip()
+    raw_response = ""
+    for line in response.iter_lines():
+        if get_current_session_id() > request_session_id:
+            response.close()
+            _safe_print(f"[Ollama/translate] Session {request_session_id} cancelled.")
+            raise RuntimeError("Request cancelled by newer session")
+        if line:
+            data = json.loads(line)
+            raw_response += data.get("response", "")
+            if data.get("done"):
+                break
+    raw_response = raw_response.strip()
 
     _safe_print(f"[Ollama/translate] Raw response: {raw_response[:300]!r}")
 

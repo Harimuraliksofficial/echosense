@@ -22,6 +22,8 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub 
   const [selectedLanguage, setSelectedLanguage] = useState('English');
   const [showLanguageMenu, setShowLanguageMenu] = useState(false);
   const translationCache = useRef({});
+  const activeSessionId = useRef(0);
+  const abortControllerRef = useRef(null);
 
   const isSpecialMessage = (text) => {
     return text === 'Listening...' || text === 'Transcribing... Please wait.' || text === 'Preparing microphone...' || (text && text.startsWith('Error:')) || (text && text.startsWith('Transcription failed'));
@@ -59,6 +61,13 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub 
   }, [transcript, selectedLanguage]);
 
   const processText = async (text, lang) => {
+    // Abort any ongoing process
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+    const currentSession = activeSessionId.current;
+    
     if (lang !== 'English') {
       const cacheKey = `${lang}_${text}`;
       if (translationCache.current[cacheKey]) {
@@ -70,7 +79,11 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub 
       setTranslatedText('');
     }
     try {
-      const result = await processSpeech(text, lang);
+      const result = await processSpeech(text, lang, currentSession, abortControllerRef.current.signal);
+      
+      // Discard if session changed
+      if (currentSession !== activeSessionId.current) return;
+
       if (lang !== 'English') {
         if (result.summary && result.summary.startsWith('[Translation Error]')) {
            setTranslatedText('');
@@ -83,18 +96,30 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub 
       }
       setSymbols(result.symbols);
     } catch (err) {
+      if (err.name === 'AbortError') {
+        console.log("processText aborted");
+        return;
+      }
       console.warn("processText error:", err);
+      if (currentSession !== activeSessionId.current) return;
       if (lang !== 'English') {
         setTranslatedText('');
         Alert.alert("Translation Failed", "An error occurred during translation. Falling back to English.");
       }
     } finally {
-      setIsTranslating(false);
+      if (currentSession === activeSessionId.current) {
+        setIsTranslating(false);
+      }
     }
   };
 
   const startRecording = async () => {
     try {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      activeSessionId.current += 1;
+      
       setIsListening(true);
       setTranscript('Preparing microphone...');
       
@@ -122,9 +147,10 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub 
       setIsTranslating(false);
       
       try {
+        await fetch(`${BACKEND_BASE_URL}/api/cancel-session`, { method: 'POST' });
         await fetch(`${BACKEND_BASE_URL}/api/clear-history`, { method: 'POST' });
       } catch (e) {
-        console.warn("Failed to clear history", e);
+        console.warn("Failed to reset backend state", e);
       }
     } catch (err) {
       console.error('Failed to start recording', err);
