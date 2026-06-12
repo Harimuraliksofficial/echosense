@@ -55,5 +55,5 @@ Clean and (optionally) translate English text to a supported Indic language.
 ### Testing the Process Endpoint
 You can test the endpoint using `curl.exe` (if using PowerShell) or `curl`:
 ```bash
-curl.exe -X POST http://localhost:5000/process -H "Content-Type: application/json" -d "{\\"text\\": \\"Hello uh how are you actually I was telling like we should go tomorrow no?\\", \\"target_lang\\": \\"hi\\"}"
+curl.exe -X POST http://10.128.11.194:5000/process -H "Content-Type: application/json" -d "{\\"text\\": \\"Hello uh how are you actually I was telling like we should go tomorrow no?\\", \\"target_lang\\": \\"hi\\"}"
 ```

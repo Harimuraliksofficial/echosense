@@ -4,5 +4,9 @@
     "source.organizeImports": "explicit",
     "source.sortMembers": "explicit"
   },
-  "java.configuration.updateBuildConfiguration": "interactive"
+  "java.configuration.updateBuildConfiguration": "interactive",
+  "python.defaultInterpreterPath": "${workspaceFolder}/backend/venv/Scripts/python.exe",
+  "python.analysis.extraPaths": [
+    "./backend"
+  ]
 }

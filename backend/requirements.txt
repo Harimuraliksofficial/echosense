@@ -6,3 +6,6 @@ ffmpeg-python
 torch
 transformers
 sentencepiece
+requests
+python-dotenv
+pytest

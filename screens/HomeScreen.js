@@ -1,18 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Platform, TouchableOpacity, Modal, Pressable } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Platform, TouchableOpacity, Modal, Pressable, TextInput, KeyboardAvoidingView, Keyboard } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Audio } from 'expo-av';
-// Picker removed as we are using a custom implementation
 
 import { processSpeech } from '../utils/keywordLogic';
 import VisualDisplay from '../components/VisualDisplay';
 import MicButton from '../components/MicButton';
+import ApiStatusIndicator from '../components/ApiStatusIndicator';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { audioManager } from '../utils/AudioManager';
+import { BACKEND_BASE_URL } from '../constants/config';
 
-const BACKEND_URL = "http://10.77.236.194:5000/transcribe";
+const BACKEND_URL = `${BACKEND_BASE_URL}/transcribe`;
 
-export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub, activeNameListener, onTranscriptionStateChange }) {
+export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub }) {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [summary, setSummary] = useState('');
@@ -21,7 +21,7 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub,
   const [selectedLanguage, setSelectedLanguage] = useState('English');
   const [showLanguageMenu, setShowLanguageMenu] = useState(false);
 
-  const languages = ['English', 'Kannada', 'Malayalam', 'Telugu', 'Tamil', 'Hindi', 'Marathi', 'Gujarati', 'Bengali', 'Spanish'];
+  const languages = ['English', 'Hindi', 'Kannada', 'Malayalam', 'Tamil', 'Telugu', 'Konkani', 'Urdu'];
 
   useEffect(() => {
     return () => {
@@ -36,18 +36,12 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub,
     if (transcript && transcript !== 'Listening...' && transcript !== 'Transcribing... Please wait.' && !transcript.startsWith('Error:') && !transcript.startsWith('Transcription failed')) {
       timeoutId = setTimeout(() => {
         processText(transcript);
-      }, 600); // Wait for the user to finish scrolling the language picker!
+      }, 600);
     }
     return () => {
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [selectedLanguage]);
-
-  useEffect(() => {
-    if (onTranscriptionStateChange) {
-      onTranscriptionStateChange(isListening);
-    }
-  }, [isListening, onTranscriptionStateChange]);
+  }, [transcript, selectedLanguage]);
 
   const processText = async (text) => {
     setSummary('Translating...');
@@ -58,15 +52,9 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub,
 
   const startRecording = async () => {
     try {
-      // 1. Tell App.js we are recording so it pauses other generic logic if any
       setIsListening(true);
       setTranscript('Preparing microphone...');
       
-      // 2. Lock the mic using audioManager to pause the background NameListener
-      audioManager.lockMic();
-      // Brief delay to ensure the OS releases the mic from the previous recording
-      await new Promise(resolve => setTimeout(resolve, 800));
-
       const { status } = await Audio.requestPermissionsAsync();
       if (status !== 'granted') {
         alert('Microphone permission is required to use EcoSense.');
@@ -113,9 +101,8 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub,
         name: 'recording.m4a'
       });
 
-      // Implement an AbortController to prevent indefinite hanging (timeout after 15 seconds)
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
 
       try {
         const response = await fetch(BACKEND_URL, {
@@ -143,19 +130,15 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub,
       } catch (fetchError) {
         clearTimeout(timeoutId);
         if (fetchError.name === 'AbortError') {
-           setTranscript(`Network Timeout: Server took longer than 15s to respond.`);
+           setTranscript(`Network Timeout: Server took too long (>60s). Try a shorter recording.`);
         } else {
            setTranscript(`Network Error: Ensure your transcription server is running. (${fetchError.message})`);
         }
       }
-      
-      // Release mic so the active name listener can resume
-      audioManager.releaseMic();
     } catch (err) {
       console.error('Failed to stop recording or transcribe', err);
       setTranscript(`Error: ${err.message}`);
       setIsListening(false);
-      audioManager.releaseMic();
     }
   };
 
@@ -172,88 +155,86 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub,
       <View style={styles.header}>
         <Text style={styles.title}>EcoSense</Text>
         <Text style={styles.subtitle}>Assistive Communication</Text>
+        {/* Ollama API health dot — top-right corner */}
+        <View style={styles.statusIndicatorContainer}>
+          <ApiStatusIndicator />
+        </View>
       </View>
 
       <View style={styles.mainContent}>
         <View style={styles.transcriptContainer}>
-          <ScrollView 
-            style={styles.transcriptBox} 
-            contentContainerStyle={styles.transcriptContent}
-            showsVerticalScrollIndicator={true}
-          >
-            <Text style={[styles.transcriptText, (transcript === 'Listening...' || transcript === 'Transcribing... Please wait.' || !transcript) && styles.placeholderText]}>
-              {transcript || 'Tap the microphone and start speaking...'}
-            </Text>
-          </ScrollView>
-        </View>
-
-        <View style={styles.summaryContainer}>
-          <View style={styles.summaryHeaderRow}>
-            <Text style={styles.summaryLabel}>SUMMARY</Text>
-            
-            <TouchableOpacity 
-              style={styles.customPickerTrigger}
-              onPress={() => setShowLanguageMenu(true)}
-            >
-              <View style={styles.activePill}>
-                <View style={styles.greenDot} />
-                <Text style={styles.activePillText}>{selectedLanguage}</Text>
-              </View>
-              <MaterialCommunityIcons name="chevron-down" size={18} color="#888888" style={{ marginLeft: 4 }} />
-            </TouchableOpacity>
+          <View style={styles.transcriptBox}>
+            <View style={styles.transcriptHeader}>
+              <TouchableOpacity 
+                style={styles.customPickerTrigger}
+                onPress={() => setShowLanguageMenu(true)}
+              >
+                <View style={styles.activePill}>
+                  <View style={styles.greenDot} />
+                  <Text style={styles.activePillText}>{selectedLanguage}</Text>
+                </View>
+                <MaterialCommunityIcons name="chevron-down" size={18} color="#888888" style={{ marginLeft: 4 }} />
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={[styles.transcriptInput, (transcript === 'Listening...' || transcript === 'Transcribing... Please wait.' || !transcript) && styles.placeholderText]}
+              multiline
+              placeholder="Tap the microphone or start typing..."
+              placeholderTextColor="#999999"
+              value={transcript}
+              onChangeText={setTranscript}
+              textAlignVertical="top"
+            />
           </View>
-
-          {/* Custom Language Menu Modal */}
-          <Modal
-            visible={showLanguageMenu}
-            transparent={true}
-            animationType="fade"
-            onRequestClose={() => setShowLanguageMenu(false)}
-          >
-            <Pressable 
-              style={styles.modalOverlay} 
-              onPress={() => setShowLanguageMenu(false)}
-            >
-              <View style={styles.menuContainer}>
-                <Text style={styles.menuTitle}>Select Language</Text>
-                <ScrollView bounces={false} style={styles.menuList}>
-                  {languages.map((lang) => (
-                    <TouchableOpacity 
-                      key={lang} 
-                      style={[
-                        styles.menuItem,
-                        selectedLanguage === lang && styles.menuItemActive
-                      ]}
-                      onPress={() => {
-                        setSelectedLanguage(lang);
-                        setShowLanguageMenu(false);
-                      }}
-                    >
-                      <Text style={[
-                        styles.menuItemText,
-                        selectedLanguage === lang && styles.menuItemTextActive
-                      ]}>
-                        {lang}
-                      </Text>
-                      {selectedLanguage === lang && (
-                         <MaterialCommunityIcons name="check" size={18} color="#10B981" />
-                      )}
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              </View>
-            </Pressable>
-          </Modal>
-
-          <ScrollView style={styles.summaryBox} contentContainerStyle={styles.summaryContent}>
-            <Text style={[styles.summaryText, !summary && styles.placeholderText]}>
-              {summary || 'Summary will appear here.'}
-            </Text>
-          </ScrollView>
         </View>
+
+        {/* Custom Language Menu Modal */}
+        <Modal
+          visible={showLanguageMenu}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setShowLanguageMenu(false)}
+        >
+          <Pressable 
+            style={styles.modalOverlay} 
+            onPress={() => setShowLanguageMenu(false)}
+          >
+            <View style={styles.menuContainer}>
+              <Text style={styles.menuTitle}>Select Language</Text>
+              <ScrollView bounces={false} style={styles.menuList}>
+                {languages.map((lang) => (
+                  <TouchableOpacity 
+                    key={lang} 
+                    style={[
+                      styles.menuItem,
+                      selectedLanguage === lang && styles.menuItemActive
+                    ]}
+                    onPress={() => {
+                      setSelectedLanguage(lang);
+                      setShowLanguageMenu(false);
+                    }}
+                  >
+                    <Text style={[
+                      styles.menuItemText,
+                      selectedLanguage === lang && styles.menuItemTextActive
+                    ]}>
+                      {lang}
+                    </Text>
+                    {selectedLanguage === lang && (
+                       <MaterialCommunityIcons name="check" size={18} color="#10B981" />
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          </Pressable>
+        </Modal>
 
         <View style={styles.visualArea}>
-          <VisualDisplay symbols={symbols} />
+          <View style={styles.visualHeaderRow}>
+            <Text style={styles.summaryLabel}>VISUAL COMMUNICATION</Text>
+          </View>
+          <VisualDisplay transcript={transcript} keywords={symbols} />
         </View>
       </View>
 
@@ -272,10 +253,7 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub,
 
         <View style={styles.sideControlContainer}>
           <TouchableOpacity style={styles.proFeaturesBtn} onPress={onNavigateToFeatureHub} activeOpacity={0.7}>
-            <MaterialCommunityIcons name="ear-hearing" size={28} color="#222222" />
-            <View style={[styles.statusBadge, activeNameListener ? styles.statusBadgeOn : styles.statusBadgeOff]}>
-                <Text style={styles.statusBadgeText}>{activeNameListener ? 'ON' : 'OFF'}</Text>
-            </View>
+            <MaterialCommunityIcons name="cog-outline" size={28} color="#222222" />
           </TouchableOpacity>
         </View>
       </View>
@@ -297,6 +275,12 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F0F0F0',
     position: 'relative',
   },
+  statusIndicatorContainer: {
+    position: 'absolute',
+    right: 16,
+    top: '50%',
+    transform: [{ translateY: -14 }],
+  },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
@@ -308,30 +292,26 @@ const styles = StyleSheet.create({
     color: '#666666',
     marginTop: 4,
   },
-  refreshBtn: {
-    position: 'absolute',
-    right: 20,
-    top: 25,
-    padding: 4,
-  },
   mainContent: {
     flex: 1,
     padding: 20,
   },
   transcriptContainer: {
-    flex: 1.5,
-    marginBottom: 20,
+    flex: 1,
+    marginBottom: 15,
   },
   transcriptBox: {
     flex: 1,
     backgroundColor: '#EAF4FF',
     borderRadius: 16,
+    padding: 16,
   },
-  transcriptContent: {
-    padding: 20,
-    paddingBottom: 40,
+  transcriptHeader: {
+    alignItems: 'flex-end',
+    marginBottom: 10,
   },
-  transcriptText: {
+  transcriptInput: {
+    flex: 1,
     fontSize: 24,
     color: '#222222',
     lineHeight: 34,
@@ -341,15 +321,10 @@ const styles = StyleSheet.create({
     color: '#999999',
     fontStyle: 'italic',
   },
-  summaryContainer: {
-    flex: 2.5,
-    marginBottom: 20,
-  },
-  summaryHeaderRow: {
+  visualHeaderRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 12,
   },
   summaryLabel: {
     fontSize: 12,
@@ -357,10 +332,7 @@ const styles = StyleSheet.create({
     color: '#888888',
     letterSpacing: 1,
     marginLeft: 4,
-  },
-  summaryLabelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    textTransform: 'uppercase',
   },
   customPickerTrigger: {
     flexDirection: 'row',
@@ -406,7 +378,7 @@ const styles = StyleSheet.create({
     width: '80%',
     maxHeight: '60%',
     backgroundColor: '#FFFFFF',
-    borderRadius: 32, // Very curvy iPhone style
+    borderRadius: 32,
     padding: 20,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 10 },
@@ -445,29 +417,14 @@ const styles = StyleSheet.create({
     color: '#10B981',
     fontWeight: '700',
   },
-  summaryBox: {
-    flex: 1,
-    backgroundColor: '#E8F8F5',
-    borderRadius: 12,
-  },
-  summaryContent: {
-    padding: 16,
-    paddingBottom: 30,
-    justifyContent: 'center',
-  },
-  summaryText: {
-    fontSize: 20,
-    color: '#222222',
-    fontWeight: '600',
-    lineHeight: 28,
-  },
   visualArea: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
+    flex: 1.5,
+    backgroundColor: '#E8F8F5',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#F0F0F0',
-    overflow: 'hidden',
+    borderColor: '#E8F8F5',
+    padding: 16,
+    marginBottom: 10,
   },
   bottomControls: {
     flexDirection: 'row',
@@ -507,26 +464,5 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     position: 'relative',
-  },
-  statusBadge: {
-    position: 'absolute',
-    bottom: -4,
-    backgroundColor: '#CCCCCC',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: '#FAF9F6',
-  },
-  statusBadgeOn: {
-    backgroundColor: '#10B981',
-  },
-  statusBadgeOff: {
-    backgroundColor: '#A0AEC0',
-  },
-  statusBadgeText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#FFFFFF',
   }
 });

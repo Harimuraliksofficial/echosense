@@ -3,9 +3,15 @@ import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
   Modal, Pressable, Dimensions, PanResponder
 } from 'react-native';
+import { captureRef } from 'react-native-view-shot';
+import { Image, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system';
+
+import CreateButton from '../components/CreateButton';
+import { BACKEND_BASE_URL } from '../constants/config';
 
 const PASTEL_COLORS = ['#222222', '#7EB8DA', '#A8D5BA', '#F4C2C2', '#C3B1E1'];
 const STROKE_SIZES = [2, 4, 7];
@@ -21,6 +27,12 @@ export default function CanvasScreen({ onNavigateToHome }) {
   const [strokeWidth, setStrokeWidth] = useState(4);
   const [isEraser, setIsEraser] = useState(false);
   const [strokeSizeIndex, setStrokeSizeIndex] = useState(1);
+
+  // AI Generation States
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generatedImage, setGeneratedImage] = useState(null);
+  
+  const captureViewRef = useRef(null);
 
   // Use refs for values needed inside PanResponder callbacks
   const colorRef = useRef(strokeColor);
@@ -85,14 +97,92 @@ export default function CanvasScreen({ onNavigateToHome }) {
     setStrokeWidth(STROKE_SIZES[nextIndex]);
   };
 
+  const handleCreate = async () => {
+    if (paths.length === 0 && !generatedImage) return;
+    
+    try {
+      setIsGenerating(true);
+      const uri = await captureRef(captureViewRef, {
+        format: 'png',
+        quality: 0.8,
+        result: 'base64'
+      });
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 90000); // 90s timeout for Segmind SDXL
+      
+      const payload = {
+        sketch_b64: `data:image/png;base64,${uri}`,
+        prompt: text
+      };
+      
+      let response;
+      try {
+        response = await fetch(`${BACKEND_BASE_URL}/api/generate-image`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller.signal
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+      
+      const data = await response.json();
+
+      if (!response.ok) {
+         throw new Error(data.error || `Server error (${response.status})`);
+      }
+      
+      if (data.image) {
+         setGeneratedImage(data.image);
+         setPaths([]); // clear sketch so they see the result clearly
+      } else {
+         console.error('Error generating image', data.error);
+         Alert.alert("Error", data.error || "The AI server returned an error.");
+      }
+    } catch (err) {
+       console.error("AI Generation Error", err);
+       if (err.name === 'AbortError') {
+         Alert.alert("Timeout", "Segmind AI took too long (>90s). Please try a simpler sketch.");
+       } else {
+         Alert.alert("Generation Failed", err.message || "Failed to generate image. Ensure backend is running.");
+       }
+    } finally {
+       setIsGenerating(false);
+    }
+  };
+
+  const handleDownload = async () => {
+    if (!generatedImage) return;
+    try {
+      const base64Data = generatedImage.replace('data:image/png;base64,', '');
+      const fileUri = FileSystem.documentDirectory + `generated_${Date.now()}.png`;
+      await FileSystem.writeAsStringAsync(fileUri, base64Data, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      Alert.alert('Saved', 'The generated AI image has been saved to your local storage.');
+    } catch (err) {
+      console.error(err);
+      Alert.alert('Error', 'Failed to save the image.');
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Notes</Text>
-        <TouchableOpacity onPress={handleReset} style={styles.resetBtn}>
-          <MaterialCommunityIcons name="delete-outline" size={24} color="#888" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          {generatedImage && (
+            <TouchableOpacity onPress={handleDownload} style={[styles.resetBtn, { marginRight: 10 }]}>
+              <MaterialCommunityIcons name="download-outline" size={24} color="#4A7C6F" />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity onPress={handleReset} style={styles.resetBtn}>
+            <MaterialCommunityIcons name="delete-outline" size={24} color="#888" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Mode Toggle */}
@@ -181,7 +271,15 @@ export default function CanvasScreen({ onNavigateToHome }) {
             </View>
 
             {/* SVG Canvas */}
-            <View style={styles.svgContainer} {...panResponder.panHandlers}>
+            <View style={styles.svgContainer} {...panResponder.panHandlers} ref={captureViewRef}>
+              {generatedImage && (
+                <Image 
+                  source={{ uri: generatedImage }} 
+                  style={StyleSheet.absoluteFill} 
+                  resizeMode="contain" 
+                  pointerEvents="none" 
+                />
+              )}
               <Svg style={StyleSheet.absoluteFill}>
                 {paths.map((p, i) => (
                   <Path
@@ -206,6 +304,8 @@ export default function CanvasScreen({ onNavigateToHome }) {
                 ) : null}
               </Svg>
             </View>
+            
+            <CreateButton onPress={handleCreate} disabled={paths.length === 0 && !generatedImage} />
           </View>
         )}
       </View>
@@ -251,6 +351,16 @@ export default function CanvasScreen({ onNavigateToHome }) {
           </View>
         </Pressable>
       </Modal>
+
+      {/* Loading Overlay */}
+      {isGenerating && (
+        <View style={styles.loadingOverlay}>
+          <View style={styles.loadingBox}>
+            <ActivityIndicator size="large" color="#4A7C6F" />
+            <Text style={styles.loadingText}>Generating with Segmind AI... This may take a moment.</Text>
+          </View>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -447,4 +557,29 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFFFFF',
   },
+  loadingOverlay: {
+    position: 'absolute',
+    top: 0, bottom: 0, left: 0, right: 0,
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  loadingBox: {
+    backgroundColor: '#FFFFFF',
+    padding: 24,
+    borderRadius: 20,
+    alignItems: 'center',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#222',
+    fontWeight: '500',
+  }
 });

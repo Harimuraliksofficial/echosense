@@ -46,3 +46,6 @@ app-example
 backend/venv/
 backend/__pycache__/
 backend/temp_audio/
+backend/.env
+*.db
+*.log

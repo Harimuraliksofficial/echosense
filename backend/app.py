@@ -1,18 +1,49 @@
 import os
 import re
 import subprocess
+import time
+import logging
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from faster_whisper import WhisperModel
 from werkzeug.utils import secure_filename
 import torch
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, pipeline
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 import warnings
+from dotenv import load_dotenv
+
+# Load environment variables from .env
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+
+from db import init_db, save_generation, save_keywords, get_recent_keywords
+from services.aiService import (
+    init_ai_pipeline,
+    generate_image_from_sketch,
+    extract_keywords,
+    check_ollama_health,
+    process_text_with_mistral,
+)
 
 warnings.filterwarnings("ignore")
 
+# ── Logging ─────────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] %(levelname)s %(message)s",
+    datefmt="%H:%M:%S",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("error.log", encoding="utf-8"),
+    ],
+)
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 CORS(app)
+
+# Initialize DB and AI Models
+init_db()
+init_ai_pipeline()
 
 UPLOAD_FOLDER = 'temp_audio'
 if not os.path.exists(UPLOAD_FOLDER):
@@ -20,80 +51,88 @@ if not os.path.exists(UPLOAD_FOLDER):
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-print("Loading Faster-Whisper model (medium)...")
-whisper_model = WhisperModel("medium", device="cpu", compute_type="int8")
-print("Faster-Whisper model loaded successfully.")
+# Conversation Memory (Subject to 20-minute window)
+# Format: {"timestamp": float, "text": str}
+conversation_history = []
 
-print("Loading NLLB-200 translation model (600M)...")
+logger.info("Loading Faster-Whisper model (medium)...")
+whisper_model = WhisperModel("medium", device="cpu", compute_type="int8")
+logger.info("Faster-Whisper model loaded successfully.")
+
+logger.info("Loading NLLB-200 translation model (600M)...")
 model_name = "facebook/nllb-200-distilled-600M"
 tokenizer = AutoTokenizer.from_pretrained(model_name, src_lang="eng_Latn")
 translation_model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-print("NLLB model loaded successfully.")
+logger.info("NLLB model loaded successfully.")
 
-print("Loading FLAN-T5 (base) for offline grammar correction and structuring...")
+logger.info("Loading FLAN-T5 (base) for offline grammar correction and context-aware summarization...")
 t5_name = "google/flan-t5-base"
 t5_tokenizer = AutoTokenizer.from_pretrained(t5_name)
 t5_model = AutoModelForSeq2SeqLM.from_pretrained(t5_name)
-print("FLAN-T5 loaded successfully.")
+logger.info("FLAN-T5 loaded successfully.")
 
-# We no longer use DistilBART for aggressive shortening as per user request.
-# Grammar correction via FLAN-T5 is prioritized to preserve all information.
+# Visual Assist Keywords
+SYMBOL_MAP = {
+    "hello": "hello", "hi": "hello", "hey": "hello",
+    "help": "help", "emergency": "help", "sos": "help",
+    "hungry": "hungry", "hunger": "hungry", "food": "food", "eat": "eat",
+    "thirsty": "thirsty", "thirst": "thirsty", "water": "water", "drink": "drink",
+    "pain": "pain", "hurt": "pain", "aching": "pain", "ouch": "pain",
+    "sick": "sick", "ill": "sick", "fever": "sick", "cold": "sick",
+    "toilet": "toilet", "bathroom": "toilet", "washroom": "toilet", "pee": "toilet",
+    "sleep": "sleep", "tired": "tired", "exhausted": "tired", "bed": "sleep",
+    "doctor": "doctor", "nurse": "doctor", "medical": "doctor",
+    "hospital": "hospital", "clinic": "hospital",
+    "home": "home", "house": "home",
+    "happy": "happy", "glad": "happy", "good": "happy",
+    "sad": "sad", "unhappy": "sad", "bad": "sad", "cry": "sad",
+    "angry": "angry", "mad": "angry", "furious": "angry",
+    "body": "body", "come": "come", "comehere": "comehere", "go": "go",
+    "head": "head", "how": "how", "i": "i", "medicine": "medicine",
+    "scared": "scared", "afraid": "scared", "sit": "sit", "stomach": "stomach",
+    "walk": "walk", "where": "where", "why": "why", "you": "you"
+}
+
+def extract_symbols(text):
+    if not text: return []
+    words = re.findall(r'\b\w+\b', text.lower())
+    found = []
+    seen = set()
+    for word in words:
+        if word in SYMBOL_MAP:
+            symbol = SYMBOL_MAP[word]
+            if symbol not in seen:
+                found.append(symbol)
+                seen.add(symbol)
+    return found
 
 def preprocess_audio(input_filepath, output_filepath):
-    """
-    Converts audio to 16kHz, mono channel using ffmpeg.
-    """
     command = [
         "ffmpeg", "-y", "-i", input_filepath, "-ac", "1", "-ar", "16000", output_filepath
     ]
     subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+def filter_history():
+    """Keep only chats within the last 20 minutes."""
+    global conversation_history
+    now = time.time()
+    conversation_history = [entry for entry in conversation_history if now - entry['timestamp'] < 1200]
+
 def clean_transcript(text):
-    """
-    Fixed-Transcript Refinement:
-    1. Applies domain-specific keyword mapping (e.g., sakkare -> sugar).
-    2. Cleans fillers and repetitions.
-    3. Uses FLAN-T5 for punctuation and grammar ONLY, strictly preserving input content.
-    4. Validates that no major information was lost/hallucinated.
-    """
     if not text:
         return ""
     
-    # Step 0: Domain-Specific Keyword Mapping (User requirement for context)
-    mapping = {
-        r'\bsakkare\b': 'sugar',
-        r'\bakkare\b': 'sugar', # Common mis-transcription
-        r'\b1kg\b': '1 kg',
-        r'\b2kg\b': '2 kg',
-        r'\bkg\b': 'kilogram',
-    }
-    for pattern, replacement in mapping.items():
-        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
-
-    # Step 1: Filler Removal
-    fillers = [
-        r'\buh+\b', r'\bum+\b', r'\bah+\b', r'\bmm+\b', r'\bhmm+\b',
-        r'\bso yeah\b', r'\byou know\b', r'\bi mean\b', r'\bbasically\b',
-        r'\bactually\b', r'\blike\b(?!\s+(this|that|a|the|it))',
-        r'\bokay so\b', r'\bso basically\b', r'\bno\?\s*$',
-        r'\bright\?\s*$', r'\byeah\?\s*$',
-    ]
-    for filler in fillers:
-        text = re.sub(filler, '', text, flags=re.IGNORECASE)
-    
-    # Remove duplicate consecutive words
-    text = re.sub(r'\b(\w+)(\s+\1)+\b', r'\1', text, flags=re.IGNORECASE)
     text = re.sub(r'\s+', ' ', text).strip()
+    filter_history()
     
-    if len(text.split()) < 3:
-        return text.capitalize()
-
-    # Step 2: Use FLAN-T5 for Grammar & Punctuation only
-    # We use a very strict "Fix the punctuation and grammar" prompt
+    context_str = ""
+    if conversation_history:
+        prev_texts = [entry['text'] for entry in conversation_history]
+        context_str = " Previous conversation context: " + " ".join(prev_texts)
+    
     prompt = (
-        f"Fix the punctuation and capitalization of this sentence. "
-        f"Do not add new information. Do not change the meaning. "
-        f"Keep the words exactly as they are: {text}"
+        f"Correct the grammar and punctuate this spoken text. "
+        f"Preserve all core meaning. {context_str} Current speaker input: {text}"
     )
     
     inputs = t5_tokenizer(prompt, return_tensors="pt", max_length=512, truncation=True)
@@ -104,41 +143,10 @@ def clean_transcript(text):
         )
     
     cleaned_text = t5_tokenizer.decode(outputs[0], skip_special_tokens=True)
-    
-    # Step 3: Hallucination Guard
-    # If the model output is missing too many original words or invented new ones, 
-    # fallback to the original text with simple capitalization.
-    original_words = set(text.lower().split())
-    cleaned_words = set(cleaned_text.lower().split())
-    
-    # If more than 40% of the original words are missing, or the length changed by >50%, it's likely a hallucination
-    if len(cleaned_text.split()) < len(text.split()) * 0.5 or len(cleaned_words.intersection(original_words)) < len(original_words) * 0.5:
-        # Fallback
-        return text.capitalize()
-        
+    conversation_history.append({"timestamp": time.time(), "text": cleaned_text})
     return cleaned_text
 
-# summarize_text is removed to prevent aggressive shortening.
-# Using clean_transcript (FLAN-T5) instead to preserve all details.
-
 def translate_text(text, target_lang):
-    """
-    Translates using NLLB-200.
-    Includes a 'Translation Pivot' to clarify English idioms before NLLB processing.
-    """
-    # Step 1: Clarify English idioms (e.g. "have food" -> "eat food")
-    # This ensures the translator doesn't do a literal "possess food" translation
-    clarify_prompt = (
-        f"Rewrite this spoken English to be explicit and easy to translate literally. "
-        f"Replace idioms like 'have food' with 'eat food'. Keep it simple: {text}"
-    )
-    
-    cl_inputs = t5_tokenizer(clarify_prompt, return_tensors="pt", max_length=200, truncation=True)
-    with torch.no_grad():
-        cl_outputs = t5_model.generate(**cl_inputs, max_length=200)
-    clarified_text = t5_tokenizer.decode(cl_outputs[0], skip_special_tokens=True)
-    
-    # Step 2: Translate clarified text
     lang_map = {
         "kn": "kan_Knda",
         "ml": "mal_Mlym",
@@ -148,28 +156,19 @@ def translate_text(text, target_lang):
     }
     nllb_lang = lang_map.get(target_lang, "hin_Deva")
     
-    inputs = tokenizer(clarified_text, return_tensors="pt", padding=True)
+    inputs = tokenizer(text, return_tensors="pt", padding=True)
     with torch.no_grad():
         translated_tokens = translation_model.generate(
             **inputs, 
             forced_bos_token_id=tokenizer.lang_code_to_id[nllb_lang],
             max_length=300
         )
-    translated_text = tokenizer.decode(translated_tokens[0], skip_special_tokens=True)
-    
-    # Step 3: Kannada-specific grammatical refinement (Post-processing)
-    # Fixing common "possess food" vs "eat food" (Oota) issue if it persists
-    if target_lang == "kn":
-        # If text contains "ಊಟ" (Oota) and doesn't look like a question/action properly, 
-        # we can nudge it towards "ಊಟ ಆಯ್ತಾ?" (Did you eat?) if context matches.
-        # This is a fallback for the specific "judge-ready" perfection requested.
-        if "ಊಟ" in text.lower() or "food" in text.lower():
-            if "?" in text:
-                # "Did you have food?" -> "ಊಟ ಆಯ್ತಾ?" (Did you eat?)
-                if "ಹೊಂದಿದ್ದೀರಾ" in translated_text or "ಪಡೆದಿದ್ದೀರಾ" in translated_text:
-                    return "ಊಟ ಆಯ್ತಾ?"
-            
-    return translated_text
+    return tokenizer.decode(translated_tokens[0], skip_special_tokens=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Routes — Existing
+# ─────────────────────────────────────────────────────────────────────────────
 
 @app.route('/transcribe', methods=['POST'])
 def transcribe_audio():
@@ -177,9 +176,6 @@ def transcribe_audio():
         return jsonify({'text': '', 'error': 'No audio file found'}), 400
         
     file = request.files['audio']
-    if file.filename == '':
-        return jsonify({'text': '', 'error': 'No selected file'}), 400
-        
     try:
         filename = secure_filename(file.filename)
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
@@ -188,10 +184,9 @@ def transcribe_audio():
         processed_filepath = os.path.join(app.config['UPLOAD_FOLDER'], "processed_" + filename + ".wav")
         preprocess_audio(filepath, processed_filepath)
         
-        # Whisper for STT
-        segments, info = whisper_model.transcribe(
+        segments, _ = whisper_model.transcribe(
             processed_filepath,
-            task="translate", # English output
+            task="translate",
             beam_size=1,
             temperature=0.0,
             condition_on_previous_text=False,
@@ -201,13 +196,12 @@ def transcribe_audio():
         text_parts = [s.text for s in segments if s.no_speech_prob < 0.6]
         transcribed_text = " ".join(text_parts).strip()
         
-        # Clean up files
         for f in [filepath, processed_filepath]:
-            if os.path.exists(f): 
-                os.remove(f)
+            if os.path.exists(f): os.remove(f)
                 
         return jsonify({'text': transcribed_text})
     except Exception as e:
+        logger.error(f"[transcribe] Error: {e}", exc_info=True)
         return jsonify({'text': '', 'error': str(e)}), 500
 
 @app.route('/process', methods=['POST'])
@@ -217,73 +211,162 @@ def process_text():
         return jsonify({'error': 'Missing text'}), 400
         
     text = data['text']
-    target_lang = data.get('target_lang')
-    
-    # Step 1: Clean the raw transcript (grammar, fillers, repeats)
-    # This now acts as the 'summary' to ensure no information is lost
-    cleaned_text = clean_transcript(text)
-    
-    summary = cleaned_text
-    
-    response = {
-        "cleaned_text": cleaned_text,
-        "summary": summary
-    }
-    
-    # Step 3: Translate the summary (grammar-corrected transcript)
-    if target_lang:
-        try:
-            translated_text = translate_text(summary, target_lang)
-            response["translated_text"] = translated_text
-        except Exception as e:
-            print(f"Translation error: {str(e)}")
-            response["translated_text"] = f"[Translation Error] {str(e)}"
-            
-    return jsonify(response)
+    target_lang = data.get('target_lang')  # e.g. "hi", "kn", "ml", "ta", "te", "ur", or None
 
-@app.route('/listen', methods=['POST'])
-def listen_for_name():
-    """
-    Ultra-fast endpoint for name detection.
-    Skips ffmpeg preprocessing, cleaning, and translation.
-    Just raw Whisper tiny transcription for maximum speed.
-    """
-    if 'audio' not in request.files:
-        return jsonify({'text': '', 'error': 'No audio file found'}), 400
+    # ── Primary pipeline: Mistral (grammar + translation + keywords in one call) ──
+    try:
+        mistral_lang = target_lang if target_lang else "english"
+        mistral_result = process_text_with_mistral(text, mistral_lang)
+
+        cleaned_text = mistral_result.get("english_text", text)
+        translated_text = mistral_result.get("translated_text", "")
+        mistral_keywords = mistral_result.get("keywords", [])
+
+        # Merge Mistral keywords with static symbol map for robustness
+        static_symbols = extract_symbols(cleaned_text)
+        all_symbols = list(dict.fromkeys(mistral_keywords + static_symbols))  # deduplicated, order preserved
+
+        # Update conversation history with the cleaned English text
+        conversation_history.append({"timestamp": time.time(), "text": cleaned_text})
+        filter_history()
+
+        response = {
+            "cleaned_text": cleaned_text,
+            "summary": cleaned_text,
+            "symbols": all_symbols,
+        }
+
+        if target_lang and translated_text and translated_text != cleaned_text:
+            response["translated_text"] = translated_text
+        elif target_lang and translated_text:
+            response["translated_text"] = translated_text
+
+        logger.info(f"[process] Mistral pipeline OK: lang={mistral_lang}, keywords={all_symbols}")
+        return jsonify(response)
+
+    except Exception as mistral_err:
+        # ── Fallback pipeline: FLAN-T5 grammar + NLLB translation ──
+        logger.warning(f"[process] Mistral pipeline failed, using fallback: {mistral_err}")
+
+        cleaned_text = clean_transcript(text)
+        symbols = extract_symbols(cleaned_text)
+
+        response = {
+            "cleaned_text": cleaned_text,
+            "summary": cleaned_text,
+            "symbols": symbols,
+        }
+
+        if target_lang:
+            try:
+                response["translated_text"] = translate_text(cleaned_text, target_lang)
+            except Exception as e:
+                response["translated_text"] = f"[Translation Error] {str(e)}"
+
+        return jsonify(response)
+
+@app.route('/api/generate-image', methods=['POST'])
+def generate_image():
+    data = request.json
+    if not data or 'sketch_b64' not in data:
+        return jsonify({'error': 'Missing sketch_b64 input'}), 400
         
-    file = request.files['audio']
-    if file.filename == '':
-        return jsonify({'text': '', 'error': 'No selected file'}), 400
+    sketch_b64 = data['sketch_b64']
+    user_prompt = data.get('prompt', '')
+    
+    try:
+        output_b64 = generate_image_from_sketch(sketch_b64, user_prompt)
+        save_generation(sketch_b64, output_b64, user_prompt)
+        return jsonify({"image": output_b64})
+    except RuntimeError as e:
+        logger.error(f"[Segmind] Generation failed: {e}")
+        return jsonify({"error": str(e)}), 502
+    except Exception as e:
+        logger.error(f"[generate-image] Unexpected error: {e}", exc_info=True)
+        return jsonify({"error": f"Image generation failed: {str(e)}"}), 500
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Routes — New (Ollama / Mistral)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route('/api/extract-keywords', methods=['POST'])
+def api_extract_keywords():
+    """
+    Extract meaningful keywords from the provided text using local Mistral.
+
+    Request JSON : { "text": "..." }
+    Response JSON: { "keywords": [...], "id": <db_row_id> }
+    """
+    data = request.json
+    if not data or 'text' not in data:
+        return jsonify({'error': 'Missing "text" field in request body'}), 400
+
+    text = data['text'].strip()
+    if not text:
+        return jsonify({'error': 'Text cannot be empty'}), 400
 
     try:
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
-
-        # Direct transcription — NO ffmpeg preprocessing for speed
-        segments, _ = whisper_model.transcribe(
-            filepath,
-            language="en",
-            beam_size=1, # Greedy search for speed
-            best_of=1,
-            temperature=0,
-            condition_on_previous_text=False,
-            vad_filter=False 
-        )
-
-        text_parts = [s.text for s in segments]
-        transcribed_text = " ".join(text_parts).strip()
-
-        # Cleanup
-        if os.path.exists(filepath):
-            os.remove(filepath)
-
-        return jsonify({'text': transcribed_text})
+        keywords = extract_keywords(text)
+        row_id = save_keywords(text, keywords)
+        logger.info(f"[extract-keywords] text={text[:60]!r} → keywords={keywords}")
+        return jsonify({
+            "keywords": keywords,
+            "id": row_id,
+            "source_text": text,
+        })
+    except RuntimeError as e:
+        logger.error(f"[extract-keywords] Ollama error: {e}")
+        return jsonify({"error": str(e)}), 503
     except Exception as e:
-        # Cleanup on error
-        if os.path.exists(filepath):
-            os.remove(filepath)
-        return jsonify({'text': '', 'error': str(e)}), 500
+        logger.error(f"[extract-keywords] Unexpected error: {e}", exc_info=True)
+        return jsonify({"error": f"Keyword extraction failed: {str(e)}"}), 500
+
+
+@app.route('/api/keywords', methods=['GET'])
+def api_get_keywords():
+    """
+    Retrieve recently extracted keyword records from the database.
+
+    Query params:
+      limit (int, default 50) — maximum number of records to return.
+
+    Response JSON: { "keywords": [ { id, source_text, keywords, created_at }, ... ] }
+    """
+    try:
+        limit = int(request.args.get('limit', 50))
+        limit = max(1, min(limit, 500))  # clamp to [1, 500]
+        records = get_recent_keywords(limit=limit)
+        return jsonify({"keywords": records, "count": len(records)})
+    except Exception as e:
+        logger.error(f"[api/keywords] Error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/health', methods=['GET'])
+def api_health():
+    """
+    Check Ollama server reachability and Mistral model availability.
+
+    Response JSON (healthy):
+      { "status": "ok", "model_available": true, "model": "mistral:latest", "models": [...] }
+
+    Response JSON (unhealthy):
+      { "status": "error", "model_available": false, "message": "..." }
+    """
+    try:
+        health = check_ollama_health()
+        http_status = 200 if health["status"] == "ok" else 503
+        health["model"] = "mistral:latest"
+        return jsonify(health), http_status
+    except Exception as e:
+        logger.error(f"[api/health] Error: {e}", exc_info=True)
+        return jsonify({
+            "status": "error",
+            "message": str(e),
+            "model_available": False,
+        }), 500
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)
