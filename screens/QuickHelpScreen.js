@@ -7,6 +7,7 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import ApiStatusIndicator from '../components/ApiStatusIndicator';
 
 const STORAGE_KEY = '@ecosense_quickhelp_cards';
 
@@ -169,8 +170,15 @@ export default function QuickHelpScreen({ onNavigateToHome }) {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Quick Help</Text>
-        <Text style={styles.subtitle}>Tap a card to instantly communicate your needs.</Text>
+        <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start'}}>
+          <View style={{flex: 1}}>
+            <Text style={styles.title}>Quick Help</Text>
+            <Text style={styles.subtitle}>Tap a card to instantly communicate your needs.</Text>
+          </View>
+          <View style={{marginTop: 5}}>
+            <ApiStatusIndicator />
+          </View>
+        </View>
       </View>
 
       <FlatList

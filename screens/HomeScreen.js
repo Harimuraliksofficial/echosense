@@ -252,6 +252,12 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToQuickHelp, 
         <View style={styles.transcriptContainer}>
           <View style={styles.transcriptBox}>
             <View style={styles.transcriptHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={styles.summaryLabel}>TRANSCRIPTION</Text>
+                {(isTranslating || isListening) && (
+                  <ActivityIndicator size="small" color="#4A7C6F" style={{ marginLeft: 8 }} />
+                )}
+              </View>
               <TouchableOpacity 
                 style={styles.customPickerTrigger}
                 onPress={() => setShowLanguageMenu(true)}
@@ -400,12 +406,19 @@ const styles = StyleSheet.create({
   transcriptBox: {
     flex: 1,
     backgroundColor: '#EAF4FF',
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: 20,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
   },
   transcriptHeader: {
-    alignItems: 'flex-end',
-    marginBottom: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
   },
   transcriptInput: {
     flex: 1,
@@ -425,9 +438,9 @@ const styles = StyleSheet.create({
   },
   summaryLabel: {
     fontSize: 12,
-    fontWeight: 'bold',
+    fontWeight: '700',
     color: '#888888',
-    letterSpacing: 1,
+    letterSpacing: 1.2,
     marginLeft: 4,
     textTransform: 'uppercase',
   },
@@ -515,13 +528,17 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   visualArea: {
-    flex: 1.5,
-    backgroundColor: '#E8F8F5',
-    borderRadius: 16,
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 20,
     borderWidth: 1,
-    borderColor: '#E8F8F5',
-    padding: 16,
-    marginBottom: 10,
+    borderColor: '#F0F0F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.03,
+    shadowRadius: 8,
+    elevation: 1,
   },
   bottomControls: {
     flexDirection: 'row',

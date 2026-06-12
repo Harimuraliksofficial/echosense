@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import ApiStatusIndicator from '../components/ApiStatusIndicator';
 import { BACKEND_BASE_URL } from '../constants/config';
 
 export default function HistoryScreen({ onNavigateToHome }) {
@@ -81,9 +82,14 @@ export default function HistoryScreen({ onNavigateToHome }) {
           <MaterialCommunityIcons name="arrow-left" size={28} color="#222" />
         </TouchableOpacity>
         <Text style={styles.title}>Conversation History</Text>
-        <TouchableOpacity style={styles.clearBtn} onPress={handleClearHistory} disabled={history.length === 0}>
-          <MaterialCommunityIcons name="trash-can-outline" size={24} color={history.length === 0 ? "#CCC" : "#D4726A"} />
-        </TouchableOpacity>
+        <View style={{flexDirection: 'row', alignItems: 'center'}}>
+          <View style={{marginRight: 10}}>
+            <ApiStatusIndicator />
+          </View>
+          <TouchableOpacity style={styles.clearBtn} onPress={handleClearHistory} disabled={history.length === 0}>
+            <MaterialCommunityIcons name="trash-can-outline" size={24} color={history.length === 0 ? "#CCC" : "#D4726A"} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={styles.content}>
