@@ -264,14 +264,15 @@ You are an expert multilingual translator and grammar corrector.
 Task: Process the following text and return a JSON response.
 
 Steps:
-1. Detect the language of the input text (it may be English, Hindi, Kannada, Malayalam, Tamil, Telugu, Konkani, Urdu, or mixed).
-2. Produce a grammatically correct English version of the text. If the input is already correct English, keep it as-is.
-3. Translate the corrected English text into {target_language}. If the target language is English, the translation should be the same as the corrected English text.
-4. Extract 1-8 important English keywords from the text for image search. Keywords MUST be in English only. Focus on nouns, emotions, actions, and concrete concepts. Exclude stop words.
+1. Understand the context of the input text (which may be English, Hindi, Kannada, Malayalam, Tamil, Telugu, Konkani, Urdu, or mixed).
+2. Remove filler words, repeated words, accidental utterances, and speech artifacts. Create a clean, concise, and grammatically correct English version of the intended meaning.
+3. Translate the intended meaning into {target_language}. Focus on context-aware meaning preservation rather than literal, word-by-word translation. 
+4. The translated text MUST be written in the native script of the target language (e.g., Devanagari for Hindi, Kannada script for Kannada, Malayalam script for Malayalam, Tamil script for Tamil). Never return transliterated English text. If the target language is English, keep it in English.
+5. Extract 1-8 important English keywords from the text for image search. Keywords MUST be in English only. Focus on nouns, emotions, actions, and concrete concepts. Exclude stop words.
 
 Rules:
 - Preserve the original meaning completely. Do not invent or add extra information.
-- Do not remove important information.
+- The `translated_text` MUST use the native script of {target_language}. NO TRANSLITERATION.
 - Keywords MUST ALWAYS be in English, regardless of the input or target language.
 - Return ONLY a valid JSON object. No explanations, no markdown fences, no extra text.
 
@@ -279,7 +280,7 @@ Required JSON format:
 {{"english_text": "...", "translated_text": "...", "keywords": ["keyword1", "keyword2"]}}
 
 Examples:
-Input: "I am hungry. Can you give me some food?" (target: hindi)
+Input: "Like, um, I am hungry. Can you give me some food?" (target: hindi)
 Output: {{"english_text": "I am hungry. Can you give me some food?", "translated_text": "मुझे भूख लगी है। क्या आप मुझे कुछ खाना दे सकते हैं?", "keywords": ["hungry", "food"]}}
 
 Input: "Mujhe food chahiye" (target: english)

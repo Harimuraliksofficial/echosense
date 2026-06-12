@@ -132,7 +132,7 @@ def transcribe_audio():
         segments, _ = whisper_model.transcribe(
             processed_filepath,
             task="translate",
-            beam_size=1,
+            beam_size=5,
             temperature=0.0,
             condition_on_previous_text=False,
             vad_filter=True

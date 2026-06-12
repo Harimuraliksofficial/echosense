@@ -113,7 +113,7 @@ export default function VisualDisplay({ transcript }) {
       } finally {
         setLoading(false);
       }
-    }, 1000);
+    }, 50);
 
     return () => clearTimeout(timeoutId);
   }, [transcript]);

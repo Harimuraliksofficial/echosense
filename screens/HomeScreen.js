@@ -51,7 +51,7 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub 
     if (transcript && !isSpecialMessage(transcript)) {
       timeoutId = setTimeout(() => {
         processText(transcript, selectedLanguage);
-      }, 600);
+      }, 50);
     }
     return () => {
       if (timeoutId) clearTimeout(timeoutId);
@@ -119,6 +119,7 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub 
       setTranscript('Listening...');
       setTranslatedText('');
       setSymbols(null);
+      setIsTranslating(false);
       
       try {
         await fetch(`${BACKEND_BASE_URL}/api/clear-history`, { method: 'POST' });
