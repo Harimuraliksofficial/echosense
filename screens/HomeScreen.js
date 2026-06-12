@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Platform, TouchableOpacity, Modal, Pressable, TextInput, KeyboardAvoidingView, Keyboard } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, ScrollView, Platform, TouchableOpacity, Modal, Pressable, TextInput, KeyboardAvoidingView, Keyboard, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Audio } from 'expo-av';
 
@@ -15,13 +15,28 @@ const BACKEND_URL = `${BACKEND_BASE_URL}/transcribe`;
 export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub }) {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
-  const [summary, setSummary] = useState('');
+  const [translatedText, setTranslatedText] = useState('');
+  const [isTranslating, setIsTranslating] = useState(false);
   const [symbols, setSymbols] = useState(null);
   const [recording, setRecording] = useState(null);
   const [selectedLanguage, setSelectedLanguage] = useState('English');
   const [showLanguageMenu, setShowLanguageMenu] = useState(false);
+  const translationCache = useRef({});
 
-  const languages = ['English', 'Hindi', 'Kannada', 'Malayalam', 'Tamil', 'Telugu', 'Konkani', 'Urdu'];
+  const isSpecialMessage = (text) => {
+    return text === 'Listening...' || text === 'Transcribing... Please wait.' || text === 'Preparing microphone...' || (text && text.startsWith('Error:')) || (text && text.startsWith('Transcription failed'));
+  };
+
+  const getDisplayValue = () => {
+    if (isSpecialMessage(transcript)) return transcript;
+    if (isTranslating) return 'Translating...';
+    if (selectedLanguage === 'English') return transcript;
+    return translatedText || transcript;
+  };
+
+  const displayValue = getDisplayValue();
+
+  const languages = ['English', 'Hindi', 'Kannada', 'Malayalam'];
 
   useEffect(() => {
     return () => {
@@ -33,9 +48,9 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub 
 
   useEffect(() => {
     let timeoutId;
-    if (transcript && transcript !== 'Listening...' && transcript !== 'Transcribing... Please wait.' && !transcript.startsWith('Error:') && !transcript.startsWith('Transcription failed')) {
+    if (transcript && !isSpecialMessage(transcript)) {
       timeoutId = setTimeout(() => {
-        processText(transcript);
+        processText(transcript, selectedLanguage);
       }, 600);
     }
     return () => {
@@ -43,11 +58,39 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub 
     };
   }, [transcript, selectedLanguage]);
 
-  const processText = async (text) => {
-    setSummary('Translating...');
-    const result = await processSpeech(text, selectedLanguage);
-    setSummary(result.summary);
-    setSymbols(result.symbols);
+  const processText = async (text, lang) => {
+    if (lang !== 'English') {
+      const cacheKey = `${lang}_${text}`;
+      if (translationCache.current[cacheKey]) {
+        setTranslatedText(translationCache.current[cacheKey]);
+        return;
+      }
+      setIsTranslating(true);
+    } else {
+      setTranslatedText('');
+    }
+    try {
+      const result = await processSpeech(text, lang);
+      if (lang !== 'English') {
+        if (result.summary && result.summary.startsWith('[Translation Error]')) {
+           setTranslatedText('');
+           Alert.alert("Translation Failed", "Could not connect to the translation model. Falling back to English.");
+        } else {
+           const cacheKey = `${lang}_${text}`;
+           translationCache.current[cacheKey] = result.summary;
+           setTranslatedText(result.summary);
+        }
+      }
+      setSymbols(result.symbols);
+    } catch (err) {
+      console.warn("processText error:", err);
+      if (lang !== 'English') {
+        setTranslatedText('');
+        Alert.alert("Translation Failed", "An error occurred during translation. Falling back to English.");
+      }
+    } finally {
+      setIsTranslating(false);
+    }
   };
 
   const startRecording = async () => {
@@ -74,8 +117,14 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub 
       setRecording(newRecording);
       setIsListening(true);
       setTranscript('Listening...');
-      setSummary('');
+      setTranslatedText('');
       setSymbols(null);
+      
+      try {
+        await fetch(`${BACKEND_BASE_URL}/api/clear-history`, { method: 'POST' });
+      } catch (e) {
+        console.warn("Failed to clear history", e);
+      }
     } catch (err) {
       console.error('Failed to start recording', err);
       setTranscript(`Error: ${err.message}`);
@@ -123,9 +172,6 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub 
         } else {
           const textToDisplay = result.text || 'No speech detected.';
           setTranscript(textToDisplay);
-          if (result.text) {
-            await processText(result.text);
-          }
         }
       } catch (fetchError) {
         clearTimeout(timeoutId);
@@ -177,12 +223,17 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub 
               </TouchableOpacity>
             </View>
             <TextInput
-              style={[styles.transcriptInput, (transcript === 'Listening...' || transcript === 'Transcribing... Please wait.' || !transcript) && styles.placeholderText]}
+              style={[styles.transcriptInput, (isSpecialMessage(displayValue) || !displayValue) && styles.placeholderText]}
               multiline
               placeholder="Tap the microphone or start typing..."
               placeholderTextColor="#999999"
-              value={transcript}
-              onChangeText={setTranscript}
+              value={displayValue}
+              onChangeText={(text) => {
+                 if (selectedLanguage === 'English') {
+                   setTranscript(text);
+                 }
+              }}
+              editable={!isTranslating && !isSpecialMessage(displayValue) && selectedLanguage === 'English'}
               textAlignVertical="top"
             />
           </View>

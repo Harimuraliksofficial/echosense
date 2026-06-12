@@ -16,7 +16,14 @@ import os
 import json
 import re
 import requests
+import sys
 from dotenv import load_dotenv
+
+def _safe_print(msg: str):
+    try:
+        print(msg.encode('ascii', errors='backslashreplace').decode('ascii'))
+    except Exception:
+        pass
 
 # Load .env from the backend directory
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"))
@@ -179,10 +186,10 @@ def extract_keywords(text: str) -> list:
     data = response.json()
     raw_response = data.get("response", "").strip()
 
-    print(f"[Ollama] Raw response: {raw_response[:200]}")
+    _safe_print(f"[Ollama] Raw response: {raw_response[:200]!r}")
 
     keywords = _parse_keywords_from_response(raw_response)
-    print(f"[Ollama] Extracted keywords: {keywords}")
+    _safe_print(f"[Ollama] Extracted keywords: {keywords}")
     return keywords
 
 
@@ -226,7 +233,7 @@ def _parse_keywords_from_response(raw: str) -> list:
         if items:
             return [item.strip() for item in items if item.strip()]
 
-    print(f"[Ollama][WARNING] Could not parse keywords from response: {raw[:200]}")
+    _safe_print(f"[Ollama][WARNING] Could not parse keywords from response: {raw[:200]!r}")
     return []
 
 
@@ -357,12 +364,12 @@ def process_text_with_mistral(text: str, target_lang: str = "english") -> dict:
     data = response.json()
     raw_response = data.get("response", "").strip()
 
-    print(f"[Ollama/translate] Raw response: {raw_response[:300]}")
+    _safe_print(f"[Ollama/translate] Raw response: {raw_response[:300]!r}")
 
     result = _parse_translation_response(raw_response, text, lang_name)
-    print(f"[Ollama/translate] Parsed: english={result['english_text'][:80]!r}, "
-          f"translated={result['translated_text'][:80]!r}, "
-          f"keywords={result['keywords']}")
+    _safe_print(f"[Ollama/translate] Parsed: english={result['english_text'][:80]!r}, "
+                f"translated={result['translated_text'][:80]!r}, "
+                f"keywords={result['keywords']}")
     return result
 
 
@@ -406,7 +413,7 @@ def _parse_translation_response(raw: str, original_text: str, target_lang: str) 
         if parsed:
             return _validate_translation_result(parsed, original_text, target_lang)
 
-    print(f"[Ollama/translate][WARNING] Could not parse response: {raw[:200]}")
+    _safe_print(f"[Ollama/translate][WARNING] Could not parse response: {raw[:200]!r}")
     return fallback
 
 

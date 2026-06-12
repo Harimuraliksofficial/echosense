@@ -59,17 +59,7 @@ logger.info("Loading Faster-Whisper model (medium)...")
 whisper_model = WhisperModel("medium", device="cpu", compute_type="int8")
 logger.info("Faster-Whisper model loaded successfully.")
 
-logger.info("Loading NLLB-200 translation model (600M)...")
-model_name = "facebook/nllb-200-distilled-600M"
-tokenizer = AutoTokenizer.from_pretrained(model_name, src_lang="eng_Latn")
-translation_model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-logger.info("NLLB model loaded successfully.")
-
-logger.info("Loading FLAN-T5 (base) for offline grammar correction and context-aware summarization...")
-t5_name = "google/flan-t5-base"
-t5_tokenizer = AutoTokenizer.from_pretrained(t5_name)
-t5_model = AutoModelForSeq2SeqLM.from_pretrained(t5_name)
-logger.info("FLAN-T5 loaded successfully.")
+# Models NLLB-200 and FLAN-T5 have been removed to simplify the architecture for the demo.
 
 # Visual Assist Keywords
 SYMBOL_MAP = {
@@ -118,52 +108,7 @@ def filter_history():
     now = time.time()
     conversation_history = [entry for entry in conversation_history if now - entry['timestamp'] < 1200]
 
-def clean_transcript(text):
-    if not text:
-        return ""
-    
-    text = re.sub(r'\s+', ' ', text).strip()
-    filter_history()
-    
-    context_str = ""
-    if conversation_history:
-        prev_texts = [entry['text'] for entry in conversation_history]
-        context_str = " Previous conversation context: " + " ".join(prev_texts)
-    
-    prompt = (
-        f"Correct the grammar and punctuate this spoken text. "
-        f"Preserve all core meaning. {context_str} Current speaker input: {text}"
-    )
-    
-    inputs = t5_tokenizer(prompt, return_tensors="pt", max_length=512, truncation=True)
-    with torch.no_grad():
-        outputs = t5_model.generate(
-            **inputs, max_length=512, num_beams=2, 
-            length_penalty=0.8, early_stopping=True
-        )
-    
-    cleaned_text = t5_tokenizer.decode(outputs[0], skip_special_tokens=True)
-    conversation_history.append({"timestamp": time.time(), "text": cleaned_text})
-    return cleaned_text
-
-def translate_text(text, target_lang):
-    lang_map = {
-        "kn": "kan_Knda",
-        "ml": "mal_Mlym",
-        "ta": "tam_Taml",
-        "te": "tel_Telu",
-        "hi": "hin_Deva"
-    }
-    nllb_lang = lang_map.get(target_lang, "hin_Deva")
-    
-    inputs = tokenizer(text, return_tensors="pt", padding=True)
-    with torch.no_grad():
-        translated_tokens = translation_model.generate(
-            **inputs, 
-            forced_bos_token_id=tokenizer.lang_code_to_id[nllb_lang],
-            max_length=300
-        )
-    return tokenizer.decode(translated_tokens[0], skip_special_tokens=True)
+# clean_transcript and translate_text have been removed. Mistral handles these entirely.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -245,10 +190,10 @@ def process_text():
         return jsonify(response)
 
     except Exception as mistral_err:
-        # ── Fallback pipeline: FLAN-T5 grammar + NLLB translation ──
-        logger.warning(f"[process] Mistral pipeline failed, using fallback: {mistral_err}")
-
-        cleaned_text = clean_transcript(text)
+        logger.warning(f"[process] Mistral pipeline failed: {mistral_err}", exc_info=True)
+        
+        # Simple fallback to English text and basic static keywords
+        cleaned_text = text.strip()
         symbols = extract_symbols(cleaned_text)
 
         response = {
@@ -258,12 +203,16 @@ def process_text():
         }
 
         if target_lang:
-            try:
-                response["translated_text"] = translate_text(cleaned_text, target_lang)
-            except Exception as e:
-                response["translated_text"] = f"[Translation Error] {str(e)}"
+            response["translated_text"] = f"[Translation Error] Could not connect to local Mistral."
 
         return jsonify(response)
+
+@app.route('/api/clear-history', methods=['POST'])
+def clear_history_route():
+    global conversation_history
+    conversation_history = []
+    return jsonify({"status": "cleared"})
+
 
 @app.route('/api/generate-image', methods=['POST'])
 def generate_image():
