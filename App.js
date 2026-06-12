@@ -10,7 +10,7 @@ LogBox.ignoreLogs([
 
 import HomeScreen from './screens/HomeScreen';
 import CanvasScreen from './screens/CanvasScreen';
-import FeatureHubScreen from './screens/FeatureHubScreen';
+import QuickHelpScreen from './screens/QuickHelpScreen';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -35,9 +35,9 @@ export default function App() {
     }).start();
   };
 
-  const navigateToFeatureHub = () => {
+  const navigateToQuickHelp = () => {
     Animated.spring(translateX, {
-      toValue: -SCREEN_WIDTH * 2, // Slide left to view Feature Hub (index 2)
+      toValue: -SCREEN_WIDTH * 2, // Slide left to view Quick Help (index 2)
       useNativeDriver: true,
       tension: 65,
       friction: 11,
@@ -62,13 +62,13 @@ export default function App() {
           <View style={styles.screen}>
              <HomeScreen 
                onNavigateToCanvas={navigateToCanvas} 
-               onNavigateToFeatureHub={navigateToFeatureHub}
+               onNavigateToQuickHelp={navigateToQuickHelp}
              />
           </View>
 
-          {/* Feature Hub Screen */}
+          {/* Quick Help Screen */}
           <View style={styles.screen}>
-            <FeatureHubScreen 
+            <QuickHelpScreen 
                onNavigateToHome={navigateToHome} 
             />
           </View>

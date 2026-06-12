@@ -12,7 +12,7 @@ import { BACKEND_BASE_URL } from '../constants/config';
 
 const BACKEND_URL = `${BACKEND_BASE_URL}/transcribe`;
 
-export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub }) {
+export default function HomeScreen({ onNavigateToCanvas, onNavigateToQuickHelp }) {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [translatedText, setTranslatedText] = useState('');
@@ -330,8 +330,8 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToFeatureHub 
         <MicButton isListening={isListening} onPress={handleMicPress} />
 
         <View style={styles.sideControlContainer}>
-          <TouchableOpacity style={styles.proFeaturesBtn} onPress={onNavigateToFeatureHub} activeOpacity={0.7}>
-            <MaterialCommunityIcons name="cog-outline" size={28} color="#222222" />
+          <TouchableOpacity style={styles.proFeaturesBtn} onPress={onNavigateToQuickHelp} activeOpacity={0.7}>
+            <MaterialCommunityIcons name="hand-heart" size={28} color="#D4726A" />
           </TouchableOpacity>
         </View>
       </View>
