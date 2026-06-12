@@ -3,6 +3,7 @@ import re
 import subprocess
 import time
 import logging
+import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from faster_whisper import WhisperModel
@@ -196,8 +197,52 @@ def generate_image():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Routes — New (Ollama / Mistral)
+# Routes — New (Ollama / Mistral & Qwen)
 # ─────────────────────────────────────────────────────────────────────────────
+
+@app.route('/api/recognize-canvas', methods=['POST'])
+def recognize_canvas():
+    data = request.json
+    if not data or 'sketch_b64' not in data:
+        return jsonify({'error': 'Missing sketch_b64 input'}), 400
+        
+    sketch_b64 = data['sketch_b64']
+    
+    # Strip data URI header if present
+    if "," in sketch_b64:
+        sketch_b64 = sketch_b64.split(",", 1)[1]
+        
+    ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+    
+    prompt = "Identify the main object in this drawing. Return only a single English keyword from this list: hospital, bus, car, food, water, house, phone, person, toilet, medicine, school, help, family, doctor, emergency. If you are not sure, pick the closest one or just say 'unknown'."
+    
+    payload = {
+        "model": "qwen2.5vl:3b",
+        "prompt": prompt,
+        "stream": False,
+        "images": [sketch_b64]
+    }
+    
+    try:
+        response = requests.post(f"{ollama_url}/api/generate", json=payload, timeout=60)
+        if response.status_code != 200:
+            return jsonify({'error': f'Ollama error: {response.text}'}), 502
+            
+        result = response.json()
+        raw_keyword = result.get('response', '').strip().lower()
+        
+        # Clean up punctuation and pick the first word just in case
+        clean_keyword = re.sub(r'[^a-z]', '', raw_keyword)
+        
+        if not clean_keyword or clean_keyword == "unknown":
+            return jsonify({'error': 'Drawing not recognized. Please draw more clearly.'}), 404
+            
+        return jsonify({'keyword': clean_keyword})
+        
+    except Exception as e:
+        logger.error(f"[recognize-canvas] Unexpected error: {e}", exc_info=True)
+        return jsonify({"error": f"Recognition failed: {str(e)}"}), 500
+
 
 @app.route('/api/extract-keywords', methods=['POST'])
 def extract_keywords():

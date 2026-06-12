@@ -31,6 +31,7 @@ export default function CanvasScreen({ onNavigateToHome }) {
   // AI Generation States
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedImage, setGeneratedImage] = useState(null);
+  const [recognizedKeyword, setRecognizedKeyword] = useState(null);
   
   const captureViewRef = useRef(null);
 
@@ -88,7 +89,16 @@ export default function CanvasScreen({ onNavigateToHome }) {
     setText('');
     setPaths([]);
     setCurrentPath('');
+    setGeneratedImage(null);
+    setRecognizedKeyword(null);
     setShowClearModal(false);
+  };
+
+  const handleClearCanvas = () => {
+    setPaths([]);
+    setCurrentPath('');
+    setGeneratedImage(null);
+    setRecognizedKeyword(null);
   };
 
   const cycleStrokeSize = () => {
@@ -98,7 +108,7 @@ export default function CanvasScreen({ onNavigateToHome }) {
   };
 
   const handleCreate = async () => {
-    if (paths.length === 0 && !generatedImage) return;
+    if (paths.length === 0) return;
     
     try {
       setIsGenerating(true);
@@ -108,25 +118,15 @@ export default function CanvasScreen({ onNavigateToHome }) {
         result: 'base64'
       });
       
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 90000); // 90s timeout for Segmind SDXL
-      
       const payload = {
-        sketch_b64: `data:image/png;base64,${uri}`,
-        prompt: text
+        sketch_b64: `data:image/png;base64,${uri}`
       };
       
-      let response;
-      try {
-        response = await fetch(`${BACKEND_BASE_URL}/api/generate-image`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-          signal: controller.signal
-        });
-      } finally {
-        clearTimeout(timeoutId);
-      }
+      const response = await fetch(`${BACKEND_BASE_URL}/api/recognize-canvas`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
       
       const data = await response.json();
 
@@ -134,20 +134,31 @@ export default function CanvasScreen({ onNavigateToHome }) {
          throw new Error(data.error || `Server error (${response.status})`);
       }
       
-      if (data.image) {
-         setGeneratedImage(data.image);
-         setPaths([]); // clear sketch so they see the result clearly
+      if (data.keyword) {
+         setRecognizedKeyword(data.keyword);
+         
+         // Fetch ARASAAC pictogram
+         try {
+             const arasaacRes = await fetch(`https://api.arasaac.org/v1/pictograms/en/bestsearch/${encodeURIComponent(data.keyword)}`);
+             if (!arasaacRes.ok) throw new Error("ARASAAC API failed");
+             const arasaacData = await arasaacRes.json();
+             if (arasaacData && arasaacData.length > 0) {
+                 const id = arasaacData[0]._id;
+                 setGeneratedImage(`https://static.arasaac.org/pictograms/${id}/${id}_500.png`);
+                 setPaths([]); // Clear drawing
+             } else {
+                 Alert.alert("Not Found", `Recognized as "${data.keyword}" but no ARASAAC image found.`);
+             }
+         } catch (err) {
+             Alert.alert("Network Error", "Could not fetch the ARASAAC pictogram.");
+         }
       } else {
          console.error('Error generating image', data.error);
          Alert.alert("Error", data.error || "The AI server returned an error.");
       }
     } catch (err) {
        console.error("AI Generation Error", err);
-       if (err.name === 'AbortError') {
-         Alert.alert("Timeout", "Segmind AI took too long (>90s). Please try a simpler sketch.");
-       } else {
-         Alert.alert("Generation Failed", err.message || "Failed to generate image. Ensure backend is running.");
-       }
+       Alert.alert("Recognition Failed", err.message || "Failed to recognize drawing. Ensure backend is running.");
     } finally {
        setIsGenerating(false);
     }
@@ -273,12 +284,18 @@ export default function CanvasScreen({ onNavigateToHome }) {
             {/* SVG Canvas */}
             <View style={styles.svgContainer} {...panResponder.panHandlers} ref={captureViewRef}>
               {generatedImage && (
-                <Image 
-                  source={{ uri: generatedImage }} 
-                  style={StyleSheet.absoluteFill} 
-                  resizeMode="contain" 
-                  pointerEvents="none" 
-                />
+                <View style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFFFFF' }]}>
+                  <Image 
+                    source={{ uri: generatedImage }} 
+                    style={{ width: '80%', height: '80%' }} 
+                    resizeMode="contain" 
+                  />
+                  {recognizedKeyword && (
+                    <Text style={{ position: 'absolute', bottom: 20, fontSize: 24, fontWeight: 'bold', color: '#222' }}>
+                      {recognizedKeyword.toUpperCase()}
+                    </Text>
+                  )}
+                </View>
               )}
               <Svg style={StyleSheet.absoluteFill}>
                 {paths.map((p, i) => (
@@ -305,7 +322,7 @@ export default function CanvasScreen({ onNavigateToHome }) {
               </Svg>
             </View>
             
-            <CreateButton onPress={handleCreate} disabled={paths.length === 0 && !generatedImage} />
+            <CreateButton onPress={handleCreate} onClear={handleClearCanvas} disabled={paths.length === 0} />
           </View>
         )}
       </View>
@@ -357,7 +374,7 @@ export default function CanvasScreen({ onNavigateToHome }) {
         <View style={styles.loadingOverlay}>
           <View style={styles.loadingBox}>
             <ActivityIndicator size="large" color="#4A7C6F" />
-            <Text style={styles.loadingText}>Generating with Segmind AI... This may take a moment.</Text>
+            <Text style={styles.loadingText}>Recognizing drawing...</Text>
           </View>
         </View>
       )}

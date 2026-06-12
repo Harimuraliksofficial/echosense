@@ -2,36 +2,57 @@ import React from 'react';
 import { TouchableOpacity, Text, StyleSheet, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
-export default function CreateButton({ onPress, disabled }) {
+export default function CreateButton({ onPress, onClear, disabled }) {
   return (
-    <TouchableOpacity 
-      style={[styles.button, disabled && styles.disabled]} 
-      onPress={onPress}
-      disabled={disabled}
-      activeOpacity={0.8}
-    >
-      <View style={styles.content}>
-        <MaterialCommunityIcons name="auto-fix" size={20} color="#FFFFFF" style={styles.icon} />
-        <Text style={styles.text}>Create</Text>
-      </View>
-    </TouchableOpacity>
+    <View style={styles.container}>
+      {onClear && (
+        <TouchableOpacity 
+          style={styles.clearButton} 
+          onPress={onClear}
+          activeOpacity={0.7}
+        >
+          <View style={styles.content}>
+            <MaterialCommunityIcons name="delete-outline" size={20} color="#555555" style={styles.icon} />
+            <Text style={styles.clearText}>Clear</Text>
+          </View>
+        </TouchableOpacity>
+      )}
+      <TouchableOpacity 
+        style={[styles.button, disabled && styles.disabled]} 
+        onPress={onPress}
+        disabled={disabled}
+        activeOpacity={0.8}
+      >
+        <View style={styles.content}>
+          <MaterialCommunityIcons name="eye-outline" size={20} color="#FFFFFF" style={styles.icon} />
+          <Text style={styles.text}>Recognize</Text>
+        </View>
+      </TouchableOpacity>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  button: {
+  container: {
     position: 'absolute',
     bottom: 20,
     right: 20,
-    backgroundColor: '#7C3AED', // Premium purple/violet shade
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    borderRadius: 30,
-    elevation: 8,
-    shadowColor: '#7C3AED',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    flexDirection: 'row',
+    gap: 12,
+  },
+  button: {
+    backgroundColor: '#333333', // Professional minimal dark gray
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+  },
+  clearButton: {
+    backgroundColor: '#F5F5F5',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E5E5',
   },
   disabled: {
     opacity: 0.5,
@@ -42,12 +63,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   icon: {
-    marginRight: 8,
+    marginRight: 6,
   },
   text: {
     color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
-    letterSpacing: 0.5,
+    fontSize: 15,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
+  clearText: {
+    color: '#555555',
+    fontSize: 15,
+    fontWeight: '600',
+    letterSpacing: 0.3,
   }
 });
