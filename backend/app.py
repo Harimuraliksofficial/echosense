@@ -56,11 +56,38 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 # Format: {"timestamp": float, "text": str}
 conversation_history = []
 
-logger.info("Loading Faster-Whisper model (medium)...")
-whisper_model = WhisperModel("medium", device="cpu", compute_type="int8")
+logger.info("Loading Faster-Whisper model (medium) in float32...")
+whisper_model = WhisperModel("medium", device="cpu", compute_type="float32")
 logger.info("Faster-Whisper model loaded successfully.")
 
-# Models NLLB-200 and FLAN-T5 have been removed to simplify the architecture for the demo.
+logger.info("Loading NLLB-200 translation model (600M)...")
+model_name = "facebook/nllb-200-distilled-600M"
+nllb_tokenizer = AutoTokenizer.from_pretrained(model_name, src_lang="eng_Latn")
+translation_model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+logger.info("NLLB model loaded successfully.")
+
+def translate_text(text, target_lang):
+    """
+    Translates using NLLB-200.
+    """
+    lang_map = {
+        "kn": "kan_Knda",
+        "ml": "mal_Mlym",
+        "ta": "tam_Taml",
+        "te": "tel_Telu",
+        "hi": "hin_Deva"
+    }
+    nllb_lang = lang_map.get(target_lang, "hin_Deva")
+    
+    inputs = nllb_tokenizer(text, return_tensors="pt", padding=True)
+    with torch.no_grad():
+        translated_tokens = translation_model.generate(
+            **inputs, 
+            forced_bos_token_id=nllb_tokenizer.convert_tokens_to_ids(nllb_lang),
+            max_length=300
+        )
+    translated_text = nllb_tokenizer.decode(translated_tokens[0], skip_special_tokens=True)
+    return translated_text
 
 # Visual Assist Keywords
 SYMBOL_MAP = {
@@ -160,13 +187,11 @@ def process_text():
     target_lang = data.get('target_lang')  # e.g. "hi", "kn", "ml", "ta", "te", "ur", or None
     session_id = data.get('session_id', 0)
 
-    # ── Primary pipeline: Mistral (grammar + translation + keywords in one call) ──
+    # ── Primary pipeline: Mistral (grammar + keywords) + NLLB (translation) ──
     try:
-        mistral_lang = target_lang if target_lang else "english"
-        mistral_result = process_text_with_mistral(text, mistral_lang, session_id)
+        mistral_result = process_text_with_mistral(text, session_id)
 
-        cleaned_text = mistral_result.get("english_text", text)
-        translated_text = mistral_result.get("translated_text", "")
+        cleaned_text = mistral_result.get("cleaned_text", text)
         mistral_keywords = mistral_result.get("keywords", [])
 
         # Merge Mistral keywords with static symbol map for robustness
@@ -183,12 +208,15 @@ def process_text():
             "symbols": all_symbols,
         }
 
-        if target_lang and translated_text and translated_text != cleaned_text:
+        # Use NLLB for final translation
+        if target_lang and target_lang.lower() not in ["english", "en"]:
+            logger.info(f"[process] Translating to {target_lang} using NLLB-200...")
+            translated_text = translate_text(cleaned_text, target_lang)
             response["translated_text"] = translated_text
-        elif target_lang and translated_text:
-            response["translated_text"] = translated_text
+        else:
+            response["translated_text"] = cleaned_text
 
-        logger.info(f"[process] Mistral pipeline OK: lang={mistral_lang}, keywords={all_symbols}")
+        logger.info(f"[process] Pipeline OK: lang={target_lang}, keywords={all_symbols}")
         return jsonify(response)
 
     except Exception as mistral_err:

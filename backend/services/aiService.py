@@ -269,45 +269,38 @@ _LANG_CODE_TO_NAME = {
 }
 
 _TRANSLATION_PROMPT = """\
-You are an expert multilingual translator and grammar corrector.
+You are an expert grammar corrector and context analyzer.
 
-Task: Process the following text and return a JSON response.
+Task: Process the following transcribed text and return a JSON response.
 
 Steps:
-1. Understand the context of the input text (which may be English, Hindi, Kannada, Malayalam, Tamil, Telugu, Konkani, Urdu, or mixed).
+1. Understand the context of the input text (which may be Kannada, Hindi, English, Malayalam, Tamil, Telugu, Konkani, Urdu, or mixed).
 2. Remove filler words, repeated words, accidental utterances, and speech artifacts. Create a clean, concise, and grammatically correct English version of the intended meaning.
-3. Translate the intended meaning into {target_language}. Focus on context-aware meaning preservation rather than literal, word-by-word translation. 
-4. The translated text MUST be written in the native script of the target language (e.g., Devanagari for Hindi, Kannada script for Kannada, Malayalam script for Malayalam, Tamil script for Tamil). Never return transliterated English text. If the target language is English, keep it in English.
-5. Extract 1-8 important English keywords from the text for image search. Keywords MUST be in English only. Focus on nouns, emotions, actions, and concrete concepts. Exclude stop words.
+3. Extract 1-8 important English keywords from the text for image search. Keywords MUST be in English only. Focus on nouns, emotions, actions, and concrete concepts. Exclude stop words.
 
 Rules:
-- Preserve the original meaning completely. Do not invent or add extra information.
-- The `translated_text` MUST use the native script of {target_language}. NO TRANSLITERATION.
-- Keywords MUST ALWAYS be in English, regardless of the input or target language.
 - Return ONLY a valid JSON object. No explanations, no markdown fences, no extra text.
+- The `cleaned_text` MUST be in English.
+- Keywords MUST ALWAYS be in English.
 
 Required JSON format:
-{{"english_text": "...", "translated_text": "...", "keywords": ["keyword1", "keyword2"]}}
+{{"cleaned_text": "...", "keywords": ["keyword1", "keyword2"]}}
 
 Examples:
-Input: "Like, um, I am hungry. Can you give me some food?" (target: hindi)
-Output: {{"english_text": "I am hungry. Can you give me some food?", "translated_text": "मुझे भूख लगी है। क्या आप मुझे कुछ खाना दे सकते हैं?", "keywords": ["hungry", "food"]}}
+Input: "Like, um, I am hungry. Can you give me some food?"
+Output: {{"cleaned_text": "I am hungry. Can you give me some food?", "keywords": ["hungry", "food"]}}
 
-Input: "Mujhe food chahiye" (target: english)
-Output: {{"english_text": "I need food.", "translated_text": "I need food.", "keywords": ["food"]}}
+Input: "ನನಗೆ ಹಸಿವು ಇದೆ"
+Output: {{"cleaned_text": "I am hungry.", "keywords": ["hungry"]}}
 
-Input: "ನನಗೆ ಹಸಿವು ಇದೆ" (target: kannada)
-Output: {{"english_text": "I am hungry.", "translated_text": "ನನಗೆ ಹಸಿವು ಇದೆ.", "keywords": ["hungry"]}}
-
-Input: "I have severe headache" (target: telugu)
-Output: {{"english_text": "I have a severe headache.", "translated_text": "నాకు తీవ్రమైన తలనొప్పి ఉంది.", "keywords": ["headache", "pain", "severe"]}}
+Input: "I have severe headache"
+Output: {{"cleaned_text": "I have a severe headache.", "keywords": ["headache", "pain", "severe"]}}
 
 Now process this:
-Input: "{text}" (target: {target_language})
+Input: "{text}"
 Output:"""
 
-
-def process_text_with_mistral(text: str, target_lang: str = "english", request_session_id: int = 0) -> dict:
+def process_text_with_mistral(text: str, request_session_id: int = 0) -> dict:
     """
     Use the local Mistral model (via Ollama) to perform grammar correction,
     translation, and English keyword extraction in a single request.
@@ -324,8 +317,7 @@ def process_text_with_mistral(text: str, target_lang: str = "english", request_s
     -------
     dict
         {
-            "english_text": str,       # grammar-corrected English
-            "translated_text": str,    # translated text (same as english_text if target is English)
+            "cleaned_text": str,       # grammar-corrected English
             "keywords": list[str]      # always English keywords
         }
 
@@ -335,18 +327,9 @@ def process_text_with_mistral(text: str, target_lang: str = "english", request_s
         If the Ollama server is unreachable or returns an unexpected response.
     """
     if not text or not text.strip():
-        return {"english_text": "", "translated_text": "", "keywords": []}
+        return {"cleaned_text": "", "keywords": []}
 
-    # Resolve language code to name if needed
-    lang_name = target_lang.lower().strip() if target_lang else "english"
-    if lang_name in _LANG_CODE_TO_NAME:
-        lang_name = _LANG_CODE_TO_NAME[lang_name]
-    if lang_name not in SUPPORTED_LANGUAGES:
-        lang_name = "english"
-
-    prompt = _TRANSLATION_PROMPT.replace("{text}", text.strip()).replace(
-        "{target_language}", lang_name
-    )
+    prompt = _TRANSLATION_PROMPT.replace("{text}", text.strip())
 
     payload = {
         "model": OLLAMA_MODEL,
@@ -388,21 +371,19 @@ def process_text_with_mistral(text: str, target_lang: str = "english", request_s
 
     _safe_print(f"[Ollama/translate] Raw response: {raw_response[:300]!r}")
 
-    result = _parse_translation_response(raw_response, text, lang_name)
-    _safe_print(f"[Ollama/translate] Parsed: english={result['english_text'][:80]!r}, "
-                f"translated={result['translated_text'][:80]!r}, "
+    result = _parse_translation_response(raw_response, text)
+    _safe_print(f"[Ollama/translate] Parsed: cleaned={result['cleaned_text'][:80]!r}, "
                 f"keywords={result['keywords']}")
     return result
 
 
-def _parse_translation_response(raw: str, original_text: str, target_lang: str) -> dict:
+def _parse_translation_response(raw: str, original_text: str) -> dict:
     """
-    Robustly parse the Mistral response for translation + keywords.
+    Robustly parse the Mistral response for English cleanup + keywords.
     Falls back to original text if parsing fails.
     """
     fallback = {
-        "english_text": original_text,
-        "translated_text": original_text,
+        "cleaned_text": original_text,
         "keywords": [],
     }
 
@@ -419,21 +400,21 @@ def _parse_translation_response(raw: str, original_text: str, target_lang: str) 
     # Try parsing as full JSON object
     parsed = _try_parse_json(cleaned)
     if parsed:
-        return _validate_translation_result(parsed, original_text, target_lang)
+        return _validate_translation_result(parsed, original_text)
 
     # Try finding a JSON object anywhere in the string
-    match = re.search(r'\{[^{}]*"english_text"[^{}]*\}', cleaned, re.DOTALL)
+    match = re.search(r'\{[^{}]*"cleaned_text"[^{}]*\}', cleaned, re.DOTALL)
     if match:
         parsed = _try_parse_json(match.group())
         if parsed:
-            return _validate_translation_result(parsed, original_text, target_lang)
+            return _validate_translation_result(parsed, original_text)
 
     # Broader search: find any JSON-like object
     match = re.search(r'\{.*\}', cleaned, re.DOTALL)
     if match:
         parsed = _try_parse_json(match.group())
         if parsed:
-            return _validate_translation_result(parsed, original_text, target_lang)
+            return _validate_translation_result(parsed, original_text)
 
     _safe_print(f"[Ollama/translate][WARNING] Could not parse response: {raw[:200]!r}")
     return fallback
@@ -450,19 +431,14 @@ def _try_parse_json(text: str) -> dict | None:
     return None
 
 
-def _validate_translation_result(parsed: dict, original_text: str, target_lang: str) -> dict:
-    """Validate and sanitize the parsed translation result."""
-    english_text = parsed.get("english_text", "").strip()
-    translated_text = parsed.get("translated_text", "").strip()
+def _validate_translation_result(parsed: dict, original_text: str) -> dict:
+    """Validate and sanitize the parsed result."""
+    cleaned_text = parsed.get("cleaned_text", "").strip()
     keywords = parsed.get("keywords", [])
 
-    # Ensure english_text is present
-    if not english_text:
-        english_text = original_text
-
-    # Ensure translated_text is present
-    if not translated_text:
-        translated_text = english_text if target_lang == "english" else original_text
+    # Ensure cleaned_text is present
+    if not cleaned_text:
+        cleaned_text = original_text
 
     # Ensure keywords is a list of strings
     if not isinstance(keywords, list):
@@ -470,8 +446,7 @@ def _validate_translation_result(parsed: dict, original_text: str, target_lang: 
     keywords = [str(k).strip() for k in keywords if str(k).strip()]
 
     return {
-        "english_text": english_text,
-        "translated_text": translated_text,
+        "cleaned_text": cleaned_text,
         "keywords": keywords,
     }
 
