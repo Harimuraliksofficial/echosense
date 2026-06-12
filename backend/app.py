@@ -56,9 +56,6 @@ if not os.path.exists(UPLOAD_FOLDER):
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# Conversation Memory (Subject to 20-minute window)
-# Format: {"timestamp": float, "text": str}
-conversation_history = []
 
 logger.info("Loading Faster-Whisper model (small) in float32...")
 whisper_model = WhisperModel("small", device="cpu", compute_type="float32")
@@ -104,12 +101,6 @@ def preprocess_audio(input_filepath, output_filepath):
         "ffmpeg", "-y", "-i", input_filepath, "-ac", "1", "-ar", "16000", output_filepath
     ]
     subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-def filter_history():
-    """Keep only chats within the last 20 minutes."""
-    global conversation_history
-    now = time.time()
-    conversation_history = [entry for entry in conversation_history if now - entry['timestamp'] < 1200]
 
 # clean_transcript and translate_text have been removed. Mistral handles these entirely.
 
@@ -166,11 +157,6 @@ def translate_api():
         logger.error(f"[translate] Translation failed: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/clear-history', methods=['POST'])
-def clear_history_route():
-    global conversation_history
-    conversation_history = []
-    return jsonify({"status": "cleared"})
 
 @app.route('/api/cancel-session', methods=['POST'])
 def cancel_session():
