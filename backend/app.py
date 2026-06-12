@@ -8,7 +8,7 @@ from flask_cors import CORS
 from faster_whisper import WhisperModel
 from werkzeug.utils import secure_filename
 import torch
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+from deep_translator import GoogleTranslator
 import warnings
 from dotenv import load_dotenv
 
@@ -56,38 +56,9 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 # Format: {"timestamp": float, "text": str}
 conversation_history = []
 
-logger.info("Loading Faster-Whisper model (medium) in float32...")
-whisper_model = WhisperModel("medium", device="cpu", compute_type="float32")
+logger.info("Loading Faster-Whisper model (large-v3) in float32...")
+whisper_model = WhisperModel("large-v3", device="cpu", compute_type="float32")
 logger.info("Faster-Whisper model loaded successfully.")
-
-logger.info("Loading NLLB-200 translation model (600M)...")
-model_name = "facebook/nllb-200-distilled-600M"
-nllb_tokenizer = AutoTokenizer.from_pretrained(model_name, src_lang="eng_Latn")
-translation_model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-logger.info("NLLB model loaded successfully.")
-
-def translate_text(text, target_lang):
-    """
-    Translates using NLLB-200.
-    """
-    lang_map = {
-        "kn": "kan_Knda",
-        "ml": "mal_Mlym",
-        "ta": "tam_Taml",
-        "te": "tel_Telu",
-        "hi": "hin_Deva"
-    }
-    nllb_lang = lang_map.get(target_lang, "hin_Deva")
-    
-    inputs = nllb_tokenizer(text, return_tensors="pt", padding=True)
-    with torch.no_grad():
-        translated_tokens = translation_model.generate(
-            **inputs, 
-            forced_bos_token_id=nllb_tokenizer.convert_tokens_to_ids(nllb_lang),
-            max_length=300
-        )
-    translated_text = nllb_tokenizer.decode(translated_tokens[0], skip_special_tokens=True)
-    return translated_text
 
 # Visual Assist Keywords
 SYMBOL_MAP = {
@@ -184,11 +155,11 @@ def translate_api():
         return jsonify({"translated_text": text})
         
     try:
-        logger.info(f"[translate] Translating to {target_lang} using NLLB-200...")
-        translated_text = translate_text(text, target_lang)
+        logger.info(f"[translate] Translating to {target_lang} using GoogleTranslator...")
+        translated_text = GoogleTranslator(source='en', target=target_lang).translate(text)
         return jsonify({"translated_text": translated_text})
     except Exception as e:
-        logger.error(f"[translate] NLLB failed: {e}")
+        logger.error(f"[translate] Translation failed: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/clear-history', methods=['POST'])
