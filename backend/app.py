@@ -4,6 +4,9 @@ import subprocess
 import time
 import logging
 import requests
+import io
+import base64
+from PIL import Image
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from faster_whisper import WhisperModel
@@ -212,6 +215,27 @@ def recognize_canvas():
     if "," in sketch_b64:
         sketch_b64 = sketch_b64.split(",", 1)[1]
         
+    try:
+        # Decode and optimize image with PIL
+        img_data = base64.b64decode(sketch_b64)
+        image = Image.open(io.BytesIO(img_data))
+        
+        # Drop alpha channel and convert to RGB
+        if image.mode in ("RGBA", "P"):
+            image = image.convert("RGB")
+            
+        # Resize to max 384x384 while maintaining aspect ratio
+        image.thumbnail((384, 384), Image.Resampling.LANCZOS)
+        
+        # Save as optimized JPEG
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=85)
+        optimized_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        
+    except Exception as e:
+        logger.error(f"[recognize-canvas] Image optimization failed: {e}", exc_info=True)
+        return jsonify({"error": f"Image processing failed: {str(e)}"}), 400
+
     ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
     
     prompt = "Identify the main object in this drawing. Return only a single English keyword from this list: hospital, bus, car, food, water, house, phone, person, toilet, medicine, school, help, family, doctor, emergency. If you are not sure, pick the closest one or just say 'unknown'."
@@ -220,11 +244,12 @@ def recognize_canvas():
         "model": "qwen2.5vl:3b",
         "prompt": prompt,
         "stream": False,
-        "images": [sketch_b64]
+        "images": [optimized_b64]
     }
     
     try:
-        response = requests.post(f"{ollama_url}/api/generate", json=payload, timeout=60)
+        # Increased timeout to 180 seconds for slower setups
+        response = requests.post(f"{ollama_url}/api/generate", json=payload, timeout=180)
         if response.status_code != 200:
             return jsonify({'error': f'Ollama error: {response.text}'}), 502
             
@@ -313,6 +338,8 @@ def api_health():
         health = check_ollama_health()
         http_status = 200 if health["status"] == "ok" else 503
         health["model"] = "mistral:latest"
+        models = health.get("models", [])
+        health["qwen_available"] = any("qwen2.5vl" in str(m).lower() for m in models)
         return jsonify(health), http_status
     except Exception as e:
         logger.error(f"[api/health] Error: {e}", exc_info=True)

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
-  Modal, Pressable, Dimensions, PanResponder
+  Modal, Pressable, Dimensions, PanResponder, Animated
 } from 'react-native';
 import { captureRef } from 'react-native-view-shot';
 import { Image, ActivityIndicator, Alert } from 'react-native';
@@ -33,6 +33,40 @@ export default function CanvasScreen({ onNavigateToHome }) {
   const [generatedImage, setGeneratedImage] = useState(null);
   const [recognizedKeyword, setRecognizedKeyword] = useState(null);
   
+  const [modelStatus, setModelStatus] = useState('checking'); // 'checking', 'ready', 'error'
+  const abortControllerRef = useRef(null);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const checkStatus = async () => {
+      try {
+        const res = await fetch(`${BACKEND_BASE_URL}/api/health`);
+        const data = await res.json();
+        if (data.status === 'ok' && data.qwen_available) {
+          setModelStatus('ready');
+        } else {
+          setModelStatus('error');
+        }
+      } catch {
+        setModelStatus('error');
+      }
+    };
+    checkStatus();
+    const interval = setInterval(checkStatus, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (generatedImage) {
+      fadeAnim.setValue(0);
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 600,
+        useNativeDriver: true
+      }).start();
+    }
+  }, [generatedImage, fadeAnim]);
+
   const captureViewRef = useRef(null);
 
   // Use refs for values needed inside PanResponder callbacks
@@ -110,6 +144,12 @@ export default function CanvasScreen({ onNavigateToHome }) {
   const handleCreate = async () => {
     if (paths.length === 0) return;
     
+    // Cancel pending requests
+    if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+    
     try {
       setIsGenerating(true);
       const uri = await captureRef(captureViewRef, {
@@ -125,7 +165,8 @@ export default function CanvasScreen({ onNavigateToHome }) {
       const response = await fetch(`${BACKEND_BASE_URL}/api/recognize-canvas`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: abortControllerRef.current.signal
       });
       
       const data = await response.json();
@@ -157,10 +198,13 @@ export default function CanvasScreen({ onNavigateToHome }) {
          Alert.alert("Error", data.error || "The AI server returned an error.");
       }
     } catch (err) {
+       if (err.name === 'AbortError') return; // Ignore aborted requests silently
        console.error("AI Generation Error", err);
        Alert.alert("Recognition Failed", err.message || "Failed to recognize drawing. Ensure backend is running.");
     } finally {
-       setIsGenerating(false);
+       if (!abortControllerRef.current?.signal.aborted) {
+           setIsGenerating(false);
+       }
     }
   };
 
@@ -183,7 +227,10 @@ export default function CanvasScreen({ onNavigateToHome }) {
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Notes</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Text style={styles.headerTitle}>Notes</Text>
+          <View style={[styles.statusDot, { backgroundColor: modelStatus === 'ready' ? '#4CAF50' : (modelStatus === 'checking' ? '#FFC107' : '#F44336') }]} />
+        </View>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           {generatedImage && (
             <TouchableOpacity onPress={handleDownload} style={[styles.resetBtn, { marginRight: 10 }]}>
@@ -284,7 +331,16 @@ export default function CanvasScreen({ onNavigateToHome }) {
             {/* SVG Canvas */}
             <View style={styles.svgContainer} {...panResponder.panHandlers} ref={captureViewRef}>
               {generatedImage && (
-                <View style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFFFFF' }]}>
+                <Animated.View style={[StyleSheet.absoluteFill, { 
+                    justifyContent: 'center', 
+                    alignItems: 'center', 
+                    backgroundColor: '#FFFFFF',
+                    opacity: fadeAnim,
+                    shadowColor: '#4A7C6F',
+                    shadowOpacity: 0.4,
+                    shadowRadius: 15,
+                    elevation: 10,
+                }]}>
                   <Image 
                     source={{ uri: generatedImage }} 
                     style={{ width: '80%', height: '80%' }} 
@@ -295,7 +351,7 @@ export default function CanvasScreen({ onNavigateToHome }) {
                       {recognizedKeyword.toUpperCase()}
                     </Text>
                   )}
-                </View>
+                </Animated.View>
               )}
               <Svg style={StyleSheet.absoluteFill}>
                 {paths.map((p, i) => (
@@ -398,9 +454,15 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 22,
-    fontWeight: 'bold',
+    fontWeight: '700',
     color: '#222',
-    letterSpacing: 0.3,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginLeft: 8,
+    marginTop: 4,
   },
   resetBtn: {
     padding: 6,
