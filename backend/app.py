@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 # Load environment variables from .env
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
-from db import init_db, save_generation, save_keywords, get_recent_keywords
+from db import init_db, save_generation, save_keywords, get_recent_keywords, save_history, get_history, clear_history
 from services.aiService import (
     init_ai_pipeline,
     generate_image_from_sketch,
@@ -177,6 +177,40 @@ def cancel_session_route():
     new_id = increment_session_id()
     return jsonify({"status": "cancelled", "session_id": new_id})
 
+# ── Conversation History ────────────────────────────────────────────────────
+
+@app.route('/api/history', methods=['GET'])
+def fetch_history():
+    try:
+        history = get_history()
+        return jsonify({"history": history})
+    except Exception as e:
+        logger.error(f"[get_history] Error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/history', methods=['POST'])
+def add_history():
+    data = request.json
+    if not data or 'message' not in data:
+        return jsonify({'error': 'Missing message'}), 400
+        
+    try:
+        message_text = data['message']
+        keywords = data.get('keywords', [])
+        row_id = save_history(message_text, keywords)
+        return jsonify({"status": "success", "id": row_id})
+    except Exception as e:
+        logger.error(f"[save_history] Error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/history', methods=['DELETE'])
+def remove_history():
+    try:
+        clear_history()
+        return jsonify({"status": "cleared"})
+    except Exception as e:
+        logger.error(f"[clear_history] Error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/generate-image', methods=['POST'])
 def generate_image():

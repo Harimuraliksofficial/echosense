@@ -11,6 +11,7 @@ LogBox.ignoreLogs([
 import HomeScreen from './screens/HomeScreen';
 import CanvasScreen from './screens/CanvasScreen';
 import QuickHelpScreen from './screens/QuickHelpScreen';
+import HistoryScreen from './screens/HistoryScreen';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -38,6 +39,15 @@ export default function App() {
   const navigateToQuickHelp = () => {
     Animated.spring(translateX, {
       toValue: -SCREEN_WIDTH * 2, // Slide left to view Quick Help (index 2)
+      useNativeDriver: true,
+      tension: 65,
+      friction: 11,
+    }).start();
+  };
+
+  const navigateToHistory = () => {
+    Animated.spring(translateX, {
+      toValue: -SCREEN_WIDTH * 3, // Slide left to view History (index 3)
       useNativeDriver: true,
       tension: 65,
       friction: 11,
@@ -72,6 +82,13 @@ export default function App() {
                onNavigateToHome={navigateToHome} 
             />
           </View>
+
+          {/* History Screen */}
+          <View style={styles.screen}>
+            <HistoryScreen 
+               onNavigateToHome={navigateToHome} 
+            />
+          </View>
         </Animated.View>
       </View>
     </SafeAreaProvider>
@@ -86,7 +103,7 @@ const styles = StyleSheet.create({
   screenContainer: {
     flex: 1,
     flexDirection: 'row',
-    width: SCREEN_WIDTH * 3,
+    width: SCREEN_WIDTH * 4,
   },
   screen: {
     width: SCREEN_WIDTH,

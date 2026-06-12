@@ -12,7 +12,7 @@ import { BACKEND_BASE_URL } from '../constants/config';
 
 const BACKEND_URL = `${BACKEND_BASE_URL}/transcribe`;
 
-export default function HomeScreen({ onNavigateToCanvas, onNavigateToQuickHelp }) {
+export default function HomeScreen({ onNavigateToCanvas, onNavigateToQuickHelp, onNavigateToHistory }) {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [translatedText, setTranslatedText] = useState('');
@@ -95,6 +95,18 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToQuickHelp }
         }
       }
       setSymbols(result.symbols);
+      
+      // Save to Conversation History (Fire and forget)
+      if (result.summary && result.summary.trim()) {
+         fetch(`${BACKEND_BASE_URL}/api/history`, {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({
+                 message: lang === 'English' ? result.summary : text,
+                 keywords: result.symbols || []
+             })
+         }).catch(err => console.warn('Failed to save history in background', err));
+      }
     } catch (err) {
       if (err.name === 'AbortError') {
         console.log("processText aborted");
@@ -318,12 +330,8 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToQuickHelp }
 
       <View style={styles.bottomControls}>
         <View style={styles.sideControlContainer}>
-          <TouchableOpacity 
-            style={styles.canvasBtn} 
-            onPress={onNavigateToCanvas}
-            activeOpacity={0.7}
-          >
-            <MaterialCommunityIcons name="pencil-outline" size={28} color="#222222" />
+          <TouchableOpacity style={styles.historyBtn} onPress={onNavigateToHistory} activeOpacity={0.7}>
+            <MaterialCommunityIcons name="history" size={28} color="#222222" />
           </TouchableOpacity>
         </View>
 
@@ -516,7 +524,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  canvasBtn: {
+  historyBtn: {
     width: 60,
     height: 60,
     borderRadius: 30,
