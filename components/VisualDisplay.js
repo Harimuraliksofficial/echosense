@@ -4,50 +4,17 @@
  * Renders ARASAAC pictograms for the keywords extracted from the user's transcript.
  *
  * Keyword extraction pipeline (post-migration):
- *   transcript text
- *       → POST /api/extract-keywords  (Flask backend → Ollama Mistral)
- *       → ["keyword1", "keyword2", ...]
+ *   transcript text -> processed by Mistral -> passed as `keywords` prop
  *       → ARASAAC pictogram API per keyword
  *       → pictogram images displayed here
- *
- * All Gemini API references have been removed.
  */
 
 import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, StyleSheet, Animated, Image, ActivityIndicator } from 'react-native';
-import { BACKEND_BASE_URL } from '../constants/config';
 
-const KEYWORDS_ENDPOINT = `${BACKEND_BASE_URL}/api/extract-keywords`;
-
-/**
- * Fetch keywords from the local Mistral model via the Flask backend.
- * Returns an array of keyword strings.
- */
-const fetchOllamaKeywords = async (text, signal) => {
-  const response = await fetch(KEYWORDS_ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
-    signal
-  });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Keyword API error (${response.status}): ${err.slice(0, 120)}`);
-  }
-
-  const data = await response.json();
-
-  if (!data.keywords || !Array.isArray(data.keywords)) {
-    throw new Error('Invalid response from keyword API: missing keywords array');
-  }
-
-  return data.keywords; // e.g. ["Mangalore", "AI", "project"]
-};
-
-export default function VisualDisplay({ transcript }) {
+export default function VisualDisplay({ transcript, keywords }) {
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const lastProcessedText = useRef('');
+  const lastProcessedKeywords = useRef('');
   const [images, setImages] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -64,31 +31,25 @@ export default function VisualDisplay({ transcript }) {
       return;
     }
 
-    const normalizedText = transcript.trim().toLowerCase();
-    if (normalizedText === lastProcessedText.current.trim().toLowerCase()) {
+    if (!keywords || keywords.length === 0) {
+      setImages([]);
+      return;
+    }
+
+    // Prevent re-fetching if keywords haven't changed
+    const currentKeywordsStr = keywords.join(',');
+    if (currentKeywordsStr === lastProcessedKeywords.current) {
       return;
     }
 
     const controller = new AbortController();
     
-    const timeoutId = setTimeout(async () => {
-      lastProcessedText.current = transcript;
+    const fetchImages = async () => {
+      lastProcessedKeywords.current = currentKeywordsStr;
       setLoading(true);
       setError(null);
 
       try {
-        // Step 1: Extract keywords via Ollama Mistral (through Flask backend)
-        const keywords = await fetchOllamaKeywords(transcript, controller.signal);
-
-        if (controller.signal.aborted) return;
-
-        if (!keywords || keywords.length === 0) {
-          setImages([]);
-          setLoading(false);
-          return;
-        }
-
-        // Step 2: Fetch ARASAAC pictograms for each keyword
         const newImages = [];
         for (const kw of keywords) {
           if (controller.signal.aborted) return;
@@ -110,7 +71,6 @@ export default function VisualDisplay({ transcript }) {
             }
           } catch (pictoErr) {
             if (pictoErr.name === 'AbortError') return;
-            // If one pictogram fails, continue with the rest
             console.warn(`[VisualDisplay] Pictogram fetch failed for "${kw}":`, pictoErr.message);
           }
         }
@@ -119,20 +79,21 @@ export default function VisualDisplay({ transcript }) {
         setImages(newImages);
       } catch (err) {
         if (err.name === 'AbortError') return;
-        console.error('[VisualDisplay] Keyword extraction failed:', err);
-        setError(err.message || 'Failed to extract keywords from transcript.');
+        console.error('[VisualDisplay] Image fetch failed:', err);
+        setError('Failed to load visual communication images.');
       } finally {
         if (!controller.signal.aborted) {
           setLoading(false);
         }
       }
-    }, 50);
+    };
+
+    fetchImages();
 
     return () => {
-      clearTimeout(timeoutId);
       controller.abort();
     };
-  }, [transcript]);
+  }, [transcript, keywords]);
 
   useEffect(() => {
     if (images.length > 0 || error) {

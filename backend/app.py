@@ -157,16 +157,13 @@ def transcribe_audio():
         processed_filepath = os.path.join(app.config['UPLOAD_FOLDER'], "processed_" + filename + ".wav")
         preprocess_audio(filepath, processed_filepath)
         
-        segments, _ = whisper_model.transcribe(
+        segments, info = whisper_model.transcribe(
             processed_filepath,
-            task="transcribe",
             beam_size=5,
-            temperature=0.0,
-            condition_on_previous_text=False,
-            vad_filter=True
+            task="translate"
         )
         
-        text_parts = [s.text for s in segments if s.no_speech_prob < 0.6]
+        text_parts = [s.text for s in segments]
         transcribed_text = " ".join(text_parts).strip()
         
         for f in [filepath, processed_filepath]:
@@ -177,65 +174,22 @@ def transcribe_audio():
         logger.error(f"[transcribe] Error: {e}", exc_info=True)
         return jsonify({'text': '', 'error': str(e)}), 500
 
-@app.route('/process', methods=['POST'])
-def process_text():
+@app.route('/api/translate', methods=['POST'])
+def translate_api():
     data = request.json
-    if not data or 'text' not in data:
-        return jsonify({'error': 'Missing text'}), 400
+    text = data.get('text', '')
+    target_lang = data.get('target_lang')
+    
+    if not target_lang or target_lang.lower() in ["english", "en"]:
+        return jsonify({"translated_text": text})
         
-    text = data['text']
-    target_lang = data.get('target_lang')  # e.g. "hi", "kn", "ml", "ta", "te", "ur", or None
-    session_id = data.get('session_id', 0)
-
-    # ── Primary pipeline: Mistral (grammar + keywords) + NLLB (translation) ──
     try:
-        mistral_result = process_text_with_mistral(text, session_id)
-
-        cleaned_text = mistral_result.get("cleaned_text", text)
-        mistral_keywords = mistral_result.get("keywords", [])
-
-        # Merge Mistral keywords with static symbol map for robustness
-        static_symbols = extract_symbols(cleaned_text)
-        all_symbols = list(dict.fromkeys(mistral_keywords + static_symbols))  # deduplicated, order preserved
-
-        # Update conversation history with the cleaned English text
-        conversation_history.append({"timestamp": time.time(), "text": cleaned_text})
-        filter_history()
-
-        response = {
-            "cleaned_text": cleaned_text,
-            "summary": cleaned_text,
-            "symbols": all_symbols,
-        }
-
-        # Use NLLB for final translation
-        if target_lang and target_lang.lower() not in ["english", "en"]:
-            logger.info(f"[process] Translating to {target_lang} using NLLB-200...")
-            translated_text = translate_text(cleaned_text, target_lang)
-            response["translated_text"] = translated_text
-        else:
-            response["translated_text"] = cleaned_text
-
-        logger.info(f"[process] Pipeline OK: lang={target_lang}, keywords={all_symbols}")
-        return jsonify(response)
-
-    except Exception as mistral_err:
-        logger.warning(f"[process] Mistral pipeline failed: {mistral_err}", exc_info=True)
-        
-        # Simple fallback to English text and basic static keywords
-        cleaned_text = text.strip()
-        symbols = extract_symbols(cleaned_text)
-
-        response = {
-            "cleaned_text": cleaned_text,
-            "summary": cleaned_text,
-            "symbols": symbols,
-        }
-
-        if target_lang:
-            response["translated_text"] = f"[Translation Error] Could not connect to local Mistral."
-
-        return jsonify(response)
+        logger.info(f"[translate] Translating to {target_lang} using NLLB-200...")
+        translated_text = translate_text(text, target_lang)
+        return jsonify({"translated_text": translated_text})
+    except Exception as e:
+        logger.error(f"[translate] NLLB failed: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/clear-history', methods=['POST'])
 def clear_history_route():
@@ -275,33 +229,37 @@ def generate_image():
 # ─────────────────────────────────────────────────────────────────────────────
 
 @app.route('/api/extract-keywords', methods=['POST'])
-def api_extract_keywords():
-    """
-    Extract meaningful keywords from the provided text using local Mistral.
-
-    Request JSON : { "text": "..." }
-    Response JSON: { "keywords": [...], "id": <db_row_id> }
-    """
+def extract_keywords():
     data = request.json
-    if not data or 'text' not in data:
-        return jsonify({'error': 'Missing "text" field in request body'}), 400
-
-    text = data['text'].strip()
-    if not text:
-        return jsonify({'error': 'Text cannot be empty'}), 400
-
+    text = data.get('text', '')
+    session_id = data.get('session_id', 0)
+    
     try:
-        keywords = extract_symbols(text)
-        row_id = save_keywords(text, keywords)
-        logger.info(f"[extract-keywords] text={text[:60]!r} → keywords={keywords} (fast extraction)")
+        mistral_result = process_text_with_mistral(text, session_id)
+        cleaned_text = mistral_result.get("cleaned_text", text)
+        mistral_keywords = mistral_result.get("keywords", [])
+        
+        # Merge Mistral keywords with static symbol map for robustness
+        static_symbols = extract_symbols(cleaned_text)
+        all_symbols = list(dict.fromkeys(mistral_keywords + static_symbols))
+
+        # Update conversation history with the cleaned English text
+        conversation_history.append({"timestamp": time.time(), "text": cleaned_text})
+        filter_history()
+
+        logger.info(f"[extract-keywords] text={text!r} -> keywords={all_symbols}")
         return jsonify({
-            "keywords": keywords,
-            "id": row_id,
-            "source_text": text,
+            "cleaned_text": cleaned_text,
+            "keywords": all_symbols
         })
     except Exception as e:
-        logger.error(f"[extract-keywords] Unexpected error: {e}", exc_info=True)
-        return jsonify({"error": f"Keyword extraction failed: {str(e)}"}), 500
+        logger.warning(f"[extract-keywords] Mistral failed: {e}")
+        cleaned_text = text
+        keywords = extract_symbols(text)
+        return jsonify({
+            "cleaned_text": cleaned_text,
+            "keywords": keywords
+        })
 
 
 @app.route('/api/keywords', methods=['GET'])
