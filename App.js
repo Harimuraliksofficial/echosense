@@ -4,7 +4,6 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 // Suppress known harmless deprecation warnings
 LogBox.ignoreLogs([
-  '[expo-av]',
   'setLayoutAnimationEnabledExperimental',
 ]);
 

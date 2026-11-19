@@ -140,22 +140,73 @@ def transcribe_audio():
         logger.error(f"[transcribe] Error: {e}", exc_info=True)
         return jsonify({'text': '', 'error': str(e)}), 500
 
+def translate_to_language(text: str, target_lang: str) -> str:
+    if not text or not text.strip():
+        return ""
+    if not target_lang:
+        return text
+
+    code_map = {
+        'en': 'en', 'english': 'en',
+        'hi': 'hi', 'hindi': 'hi',
+        'kn': 'kn', 'kannada': 'kn',
+        'ml': 'ml', 'malayalam': 'ml',
+        'ta': 'ta', 'tamil': 'ta',
+        'te': 'te', 'telugu': 'te'
+    }
+    lang_code = code_map.get(target_lang.lower().strip(), target_lang.lower().strip())
+    if lang_code in ['en', 'english']:
+        return text
+
+    # Strategy 1: Google Translate API (fast, reliable, handles Indian regional languages)
+    try:
+        url = "https://translate.googleapis.com/translate_a/single"
+        params = {
+            "client": "gtx",
+            "sl": "auto",
+            "tl": lang_code,
+            "dt": "t",
+            "q": text.strip()
+        }
+        res = requests.get(url, params=params, timeout=6)
+        if res.status_code == 200:
+            data = res.json()
+            if data and data[0]:
+                translated = "".join([part[0] for part in data[0] if part and part[0]]).strip()
+                if translated:
+                    return re.sub(r'<[^>]+>', '', translated).strip()
+    except Exception as e:
+        logger.warning(f"[translate] Google Translate API error: {e}")
+
+    # Strategy 2: MyMemoryTranslator fallback
+    try:
+        from deep_translator import MyMemoryTranslator
+        name_map = {'hi': 'hindi', 'kn': 'kannada', 'ml': 'malayalam', 'ta': 'tamil', 'te': 'telugu'}
+        target_name = name_map.get(lang_code, lang_code)
+        res = MyMemoryTranslator(source='english', target=target_name).translate(text)
+        if res and not res.startswith("MYMEMORY WARNING"):
+            return re.sub(r'<[^>]+>', '', res).strip()
+    except Exception as e:
+        logger.warning(f"[translate] MyMemory fallback error: {e}")
+
+    return text
+
 @app.route('/api/translate', methods=['POST'])
 def translate_api():
-    data = request.json
+    data = request.json or {}
     text = data.get('text', '')
-    target_lang = data.get('target_lang')
+    target_lang = data.get('target_lang', 'en')
     
-    if not target_lang or target_lang.lower() in ["english", "en"]:
+    if not text or not target_lang or target_lang.lower() in ["english", "en"]:
         return jsonify({"translated_text": text})
         
     try:
-        logger.info(f"[translate] Translating to {target_lang} using GoogleTranslator...")
-        translated_text = GoogleTranslator(source='en', target=target_lang).translate(text)
+        logger.info(f"[translate] Translating to {target_lang}...")
+        translated_text = translate_to_language(text, target_lang)
         return jsonify({"translated_text": translated_text})
     except Exception as e:
         logger.error(f"[translate] Translation failed: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e), "translated_text": text}), 500
 
 
 @app.route('/api/cancel-session', methods=['POST'])
@@ -245,7 +296,14 @@ def recognize_canvas():
 
     ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
     
-    prompt = "Identify the main object in this drawing. Return only a single English keyword from this list: hospital, bus, car, food, water, house, phone, person, toilet, medicine, school, help, family, doctor, emergency. If you are not sure, pick the closest one or just say 'unknown'."
+    prompt = (
+        "Identify what is drawn in this sketch. "
+        "If it shows a bus with a shelter, stop, or question mark, reply: 'bus stop'. "
+        "If it shows luggage, suitcase, trolley, counter, or question mark, reply: 'luggage counter'. "
+        "Otherwise, return a single English keyword from this list: "
+        "hospital, bus, car, food, water, house, phone, person, toilet, medicine, school, help, family, doctor, emergency. "
+        "If unsure, pick the closest one or say 'unknown'."
+    )
     
     payload = {
         "model": "qwen2.5vl:3b",
@@ -263,13 +321,17 @@ def recognize_canvas():
         result = response.json()
         raw_keyword = result.get('response', '').strip().lower()
         
-        # Clean up punctuation and pick the first word just in case
-        clean_keyword = re.sub(r'[^a-z]', '', raw_keyword)
+        # Clean up punctuation while preserving spaces between words
+        clean_keyword = re.sub(r'[^a-z0-9\s-]', '', raw_keyword).strip()
+        clean_keyword = re.sub(r'\s+', ' ', clean_keyword)
         
         if not clean_keyword or clean_keyword == "unknown":
             return jsonify({'error': 'Drawing not recognized. Please draw more clearly.'}), 404
             
-        return jsonify({'keyword': clean_keyword})
+        return jsonify({
+            'keyword': clean_keyword,
+            'description': raw_keyword
+        })
         
     except Exception as e:
         logger.error(f"[recognize-canvas] Unexpected error: {e}", exc_info=True)

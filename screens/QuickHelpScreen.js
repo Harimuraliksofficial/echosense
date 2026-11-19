@@ -7,7 +7,7 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import ApiStatusIndicator from '../components/ApiStatusIndicator';
+import * as Speech from 'expo-speech';
 
 const STORAGE_KEY = '@ecosense_quickhelp_cards';
 
@@ -32,6 +32,7 @@ export default function QuickHelpScreen({ onNavigateToHome }) {
   const [activeCard, setActiveCard] = useState(null);
   const [displayImage, setDisplayImage] = useState(null);
   const [isFetchingImage, setIsFetchingImage] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
 
   // Edit/Add Form State
   const [formTitle, setFormTitle] = useState('');
@@ -42,7 +43,39 @@ export default function QuickHelpScreen({ onNavigateToHome }) {
 
   useEffect(() => {
     loadCards();
+    return () => {
+      try {
+        Speech.stop();
+      } catch (_) {}
+    };
   }, []);
+
+  const speakMessage = (text) => {
+    if (!text) return;
+    try {
+      Speech.stop();
+      setIsSpeaking(true);
+      Speech.speak(text, {
+        pitch: 1.0,
+        rate: 0.92,
+        onStart: () => setIsSpeaking(true),
+        onDone: () => setIsSpeaking(false),
+        onStopped: () => setIsSpeaking(false),
+        onError: () => setIsSpeaking(false),
+      });
+    } catch (e) {
+      console.warn('Speech error:', e);
+      setIsSpeaking(false);
+    }
+  };
+
+  const closeDisplayModal = () => {
+    try {
+      Speech.stop();
+    } catch (_) {}
+    setIsSpeaking(false);
+    setShowDisplayModal(false);
+  };
 
   const loadCards = async () => {
     try {
@@ -74,6 +107,11 @@ export default function QuickHelpScreen({ onNavigateToHome }) {
     setShowDisplayModal(true);
     setIsFetchingImage(true);
     fadeAnim.setValue(0);
+
+    // Speak aloud the selected help message
+    if (card && card.message) {
+      speakMessage(card.message);
+    }
 
     try {
       const res = await fetch(`https://api.arasaac.org/v1/pictograms/en/bestsearch/${encodeURIComponent(card.keyword || card.title)}`);
@@ -153,6 +191,16 @@ export default function QuickHelpScreen({ onNavigateToHome }) {
       onLongPress={() => openEditModal(item)}
       activeOpacity={0.7}
     >
+      <TouchableOpacity 
+        style={styles.cardSpeakBtn} 
+        onPress={(e) => {
+          e?.stopPropagation?.();
+          speakMessage(item.message);
+        }}
+        hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
+      >
+        <MaterialCommunityIcons name="volume-high" size={18} color="#4A7C6F" />
+      </TouchableOpacity>
       <View style={styles.cardIconBox}>
         <MaterialCommunityIcons name={item.icon || 'star-outline'} size={40} color="#4A7C6F" />
       </View>
@@ -170,15 +218,8 @@ export default function QuickHelpScreen({ onNavigateToHome }) {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start'}}>
-          <View style={{flex: 1}}>
-            <Text style={styles.title}>Quick Help</Text>
-            <Text style={styles.subtitle}>Tap a card to instantly communicate your needs.</Text>
-          </View>
-          <View style={{marginTop: 5}}>
-            <ApiStatusIndicator />
-          </View>
-        </View>
+        <Text style={styles.title}>Quick Help</Text>
+        <Text style={styles.subtitle}>Tap a card to instantly communicate your needs.</Text>
       </View>
 
       <FlatList
@@ -202,7 +243,13 @@ export default function QuickHelpScreen({ onNavigateToHome }) {
       </View>
 
       {/* ── Full-Screen Communication View ── */}
-      <Modal visible={showDisplayModal} animationType="fade" transparent={false} presentationStyle="fullScreen">
+      <Modal 
+        visible={showDisplayModal} 
+        animationType="fade" 
+        transparent={false} 
+        presentationStyle="fullScreen"
+        onRequestClose={closeDisplayModal}
+      >
         <SafeAreaView style={styles.fullScreenContainer}>
           <View style={styles.fullScreenTop}>
             {isFetchingImage ? (
@@ -222,16 +269,32 @@ export default function QuickHelpScreen({ onNavigateToHome }) {
             <Text style={styles.fullScreenMessage} adjustsFontSizeToFit numberOfLines={4}>
               {activeCard?.message?.toUpperCase()}
             </Text>
+
+            {/* Read Aloud Button directly below the selected message */}
+            <TouchableOpacity 
+              style={[styles.readAloudBtn, isSpeaking && styles.readAloudBtnActive]} 
+              onPress={() => speakMessage(activeCard?.message)} 
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons 
+                name={isSpeaking ? "volume-high" : "volume-medium"} 
+                size={26} 
+                color="#FFFFFF" 
+              />
+              <Text style={styles.readAloudBtnText}>
+                {isSpeaking ? "Speaking..." : "Read Aloud"}
+              </Text>
+            </TouchableOpacity>
           </View>
 
           <View style={styles.fullScreenBottom}>
-            <TouchableOpacity style={styles.fsBtnBack} onPress={() => setShowDisplayModal(false)} activeOpacity={0.7}>
+            <TouchableOpacity style={styles.fsBtnBack} onPress={closeDisplayModal} activeOpacity={0.7}>
               <MaterialCommunityIcons name="arrow-left" size={28} color="#4A7C6F" />
               <Text style={styles.fsBtnBackText}>Back</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.fsBtnHome} onPress={() => {
-              setShowDisplayModal(false);
+              closeDisplayModal();
               onNavigateToHome();
             }} activeOpacity={0.7}>
               <MaterialCommunityIcons name="home" size={28} color="#FFFFFF" />
@@ -361,6 +424,18 @@ const styles = StyleSheet.create({
     top: 10,
     right: 10,
   },
+  cardSpeakBtn: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F0F9F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 2,
+  },
   bottomControls: {
     position: 'absolute',
     bottom: 30,
@@ -430,13 +505,39 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   fullScreenMessage: {
-    fontSize: 48,
+    fontSize: 44,
     fontWeight: '900',
     color: '#111111',
     textAlign: 'center',
     textTransform: 'uppercase',
-    letterSpacing: 2,
-    lineHeight: 56,
+    letterSpacing: 1.5,
+    lineHeight: 52,
+    marginBottom: 20,
+  },
+  readAloudBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#4A7C6F',
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    borderRadius: 28,
+    elevation: 4,
+    shadowColor: '#4A7C6F',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+  },
+  readAloudBtnActive: {
+    backgroundColor: '#2E5B50',
+    transform: [{ scale: 1.02 }],
+  },
+  readAloudBtnText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginLeft: 10,
+    letterSpacing: 0.5,
   },
   fullScreenBottom: {
     flexDirection: 'row',

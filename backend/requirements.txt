@@ -8,4 +8,6 @@ transformers
 sentencepiece
 requests
 python-dotenv
+pillow
+deep-translator
 pytest

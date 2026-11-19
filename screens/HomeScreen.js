@@ -1,9 +1,24 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, Platform, TouchableOpacity, Modal, Pressable, TextInput, KeyboardAvoidingView, Keyboard, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Audio } from 'expo-av';
+import {
+  useAudioRecorder,
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+} from 'expo-audio';
+import * as FileSystem from 'expo-file-system/legacy';
 
-import { processSpeech } from '../utils/keywordLogic';
+import { processSpeech, translateOnly } from '../utils/keywordLogic';
+import {
+  getActiveScenario,
+  setActiveScenario,
+  clearActiveScenario,
+  matchSpokenReply,
+  matchWritingScenario,
+  getScenarioResponse,
+  DEMO_SCENARIOS,
+} from '../utils/demoScenarioEngine';
 import VisualDisplay from '../components/VisualDisplay';
 import MicButton from '../components/MicButton';
 import ApiStatusIndicator from '../components/ApiStatusIndicator';
@@ -18,10 +33,11 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToQuickHelp, 
   const [translatedText, setTranslatedText] = useState('');
   const [isTranslating, setIsTranslating] = useState(false);
   const [symbols, setSymbols] = useState(null);
-  const [recording, setRecording] = useState(null);
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const [selectedLanguage, setSelectedLanguage] = useState('English');
   const [showLanguageMenu, setShowLanguageMenu] = useState(false);
   const translationCache = useRef({});
+  const lastCleanedTextRef = useRef('');
   const activeSessionId = useRef(0);
   const abortControllerRef = useRef(null);
 
@@ -32,7 +48,6 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToQuickHelp, 
   const getDisplayValue = () => {
     if (isSpecialMessage(transcript)) return transcript;
     if (isTranslating) return 'Translating...';
-    if (selectedLanguage === 'English') return transcript;
     return translatedText || transcript;
   };
 
@@ -42,11 +57,11 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToQuickHelp, 
 
   useEffect(() => {
     return () => {
-      if (recording) {
-        recording.stopAndUnloadAsync().catch(() => {});
+      if (audioRecorder.isRecording) {
+        audioRecorder.stop().catch(() => {});
       }
     };
-  }, [recording]);
+  }, [audioRecorder]);
 
   useEffect(() => {
     let timeoutId;
@@ -58,7 +73,40 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToQuickHelp, 
     return () => {
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [transcript, selectedLanguage]);
+  }, [transcript]);
+
+  const handleLanguageChange = async (newLang) => {
+    setSelectedLanguage(newLang);
+    setShowLanguageMenu(false);
+
+    if (!transcript || isSpecialMessage(transcript)) {
+      return;
+    }
+
+    if (newLang === 'English') {
+      setTranslatedText('');
+      return;
+    }
+
+    const textToTranslate = lastCleanedTextRef.current || transcript;
+    const cacheKey = `${newLang}_${textToTranslate}`;
+    if (translationCache.current[cacheKey]) {
+      setTranslatedText(translationCache.current[cacheKey]);
+      return;
+    }
+
+    setIsTranslating(true);
+    try {
+      const translated = await translateOnly(textToTranslate, newLang);
+      translationCache.current[cacheKey] = translated;
+      setTranslatedText(translated);
+    } catch (err) {
+      console.warn("Language switch translation error:", err);
+      Alert.alert("Translation Failed", "Could not translate text. Please check connection.");
+    } finally {
+      setIsTranslating(false);
+    }
+  };
 
   const processText = async (text, lang) => {
     // Abort any ongoing process
@@ -67,6 +115,46 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToQuickHelp, 
     }
     abortControllerRef.current = new AbortController();
     const currentSession = activeSessionId.current;
+
+    // ── Predefined Demo Scenario Check (Section 3 & 4) ──────────────────────
+    const activeId = getActiveScenario();
+    const matchedReplyScenario = matchSpokenReply(text, activeId);
+
+    if (matchedReplyScenario) {
+      const demoResult = getScenarioResponse(matchedReplyScenario, lang);
+      lastCleanedTextRef.current = demoResult.cleanedText;
+
+      // Populate language cache for instant 0ms switching across all supported languages
+      translationCache.current[`English_${demoResult.cleanedText}`] = matchedReplyScenario.reply.en;
+      translationCache.current[`Hindi_${demoResult.cleanedText}`] = matchedReplyScenario.reply.hi;
+      translationCache.current[`Kannada_${demoResult.cleanedText}`] = matchedReplyScenario.reply.kn;
+      translationCache.current[`Malayalam_${demoResult.cleanedText}`] = matchedReplyScenario.reply.ml;
+      translationCache.current[`English_${text}`] = matchedReplyScenario.reply.en;
+      translationCache.current[`Hindi_${text}`] = matchedReplyScenario.reply.hi;
+      translationCache.current[`Kannada_${text}`] = matchedReplyScenario.reply.kn;
+      translationCache.current[`Malayalam_${text}`] = matchedReplyScenario.reply.ml;
+
+      setTranslatedText(demoResult.summary);
+      setSymbols([...demoResult.symbols]);
+      setIsTranslating(false);
+
+      // Save history in background
+      const finalMsg = demoResult.summary;
+      const kwString = demoResult.symbols.map(s => s.label || s.keyword).join(', ');
+      fetch(`${BACKEND_BASE_URL}/api/history`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: finalMsg, keywords: kwString })
+      }).catch(e => console.warn('History save failed', e));
+
+      return;
+    }
+
+    // Check if user is typing a written scenario question (Scenario 3 or 4)
+    const matchedWriting = matchWritingScenario(text);
+    if (matchedWriting) {
+      setActiveScenario(matchedWriting.id);
+    }
     
     if (lang !== 'English') {
       const cacheKey = `${lang}_${text}`;
@@ -83,6 +171,8 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToQuickHelp, 
       
       // Discard if session changed
       if (currentSession !== activeSessionId.current) return;
+
+      lastCleanedTextRef.current = result.cleanedText || text;
 
       if (lang !== 'English') {
         if (result.summary && result.summary.startsWith('[Translation Error]')) {
@@ -135,23 +225,21 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToQuickHelp, 
       setIsListening(true);
       setTranscript('Preparing microphone...');
       
-      const { status } = await Audio.requestPermissionsAsync();
+      const { status } = await requestRecordingPermissionsAsync();
       if (status !== 'granted') {
         alert('Microphone permission is required to use EcoSense.');
         setIsListening(false);
         return;
       }
 
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
       });
 
-      const { recording: newRecording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
       
-      setRecording(newRecording);
       setIsListening(true);
       setTranscript('Listening...');
       setTranslatedText('');
@@ -173,52 +261,40 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToQuickHelp, 
 
   const stopRecording = async () => {
     try {
-      if (!recording) return;
+      if (!audioRecorder.isRecording) return;
 
       setIsListening(false);
       setTranscript('Transcribing... Please wait.');
 
-      await recording.stopAndUnloadAsync();
-      const uri = recording.getURI();
-      setRecording(null);
+      await audioRecorder.stop();
+      const uri = audioRecorder.uri;
 
-      const formData = new FormData();
-      formData.append('audio', {
-        uri: Platform.OS === 'android' ? uri : uri.replace('file://', ''),
-        type: 'audio/m4a',
-        name: 'recording.m4a'
-      });
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000);
+      if (!uri) {
+        setTranscript('No recording found.');
+        return;
+      }
 
       try {
-        const response = await fetch(BACKEND_URL, {
-          method: 'POST',
-          body: formData,
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-          signal: controller.signal
+        const uploadResult = await FileSystem.uploadAsync(BACKEND_URL, uri, {
+          fieldName: 'audio',
+          httpMethod: 'POST',
+          uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+          mimeType: 'audio/m4a',
         });
-        
-        clearTimeout(timeoutId);
 
-        const result = await response.json();
-        
-        if (result.error) {
-          setTranscript(`Transcription failed: ${result.error}`);
+        if (uploadResult.status >= 200 && uploadResult.status < 300) {
+          const result = JSON.parse(uploadResult.body);
+          if (result.error) {
+            setTranscript(`Transcription failed: ${result.error}`);
+          } else {
+            const textToDisplay = result.text || 'No speech detected.';
+            setTranscript(textToDisplay);
+          }
         } else {
-          const textToDisplay = result.text || 'No speech detected.';
-          setTranscript(textToDisplay);
+          setTranscript(`Server Error (${uploadResult.status}): ${uploadResult.body}`);
         }
       } catch (fetchError) {
-        clearTimeout(timeoutId);
-        if (fetchError.name === 'AbortError') {
-           setTranscript(`Network Timeout: Server took too long (>60s). Try a shorter recording.`);
-        } else {
-           setTranscript(`Network Error: Ensure your transcription server is running. (${fetchError.message})`);
-        }
+        setTranscript(`Network Error: Ensure your transcription server is running. (${fetchError.message})`);
       }
     } catch (err) {
       console.error('Failed to stop recording or transcribe', err);
@@ -252,12 +328,6 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToQuickHelp, 
         <View style={styles.transcriptContainer}>
           <View style={styles.transcriptBox}>
             <View style={styles.transcriptHeader}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Text style={styles.summaryLabel}>TRANSCRIPTION</Text>
-                {(isTranslating || isListening) && (
-                  <ActivityIndicator size="small" color="#4A7C6F" style={{ marginLeft: 8 }} />
-                )}
-              </View>
               <TouchableOpacity 
                 style={styles.customPickerTrigger}
                 onPress={() => setShowLanguageMenu(true)}
@@ -278,6 +348,7 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToQuickHelp, 
               onChangeText={(text) => {
                  if (selectedLanguage === 'English') {
                    setTranscript(text);
+                   setTranslatedText('');
                  }
               }}
               editable={!isTranslating && !isSpecialMessage(displayValue) && selectedLanguage === 'English'}
@@ -308,8 +379,7 @@ export default function HomeScreen({ onNavigateToCanvas, onNavigateToQuickHelp, 
                       selectedLanguage === lang && styles.menuItemActive
                     ]}
                     onPress={() => {
-                      setSelectedLanguage(lang);
-                      setShowLanguageMenu(false);
+                      handleLanguageChange(lang);
                     }}
                   >
                     <Text style={[
@@ -406,19 +476,12 @@ const styles = StyleSheet.create({
   transcriptBox: {
     flex: 1,
     backgroundColor: '#EAF4FF',
-    borderRadius: 20,
-    padding: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
+    borderRadius: 16,
+    padding: 16,
   },
   transcriptHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
+    alignItems: 'flex-end',
+    marginBottom: 10,
   },
   transcriptInput: {
     flex: 1,
@@ -438,9 +501,9 @@ const styles = StyleSheet.create({
   },
   summaryLabel: {
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: 'bold',
     color: '#888888',
-    letterSpacing: 1.2,
+    letterSpacing: 1,
     marginLeft: 4,
     textTransform: 'uppercase',
   },
@@ -528,17 +591,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   visualArea: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 20,
+    flex: 1.5,
+    backgroundColor: '#E8F8F5',
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#F0F0F0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.03,
-    shadowRadius: 8,
-    elevation: 1,
+    borderColor: '#E8F8F5',
+    padding: 16,
+    marginBottom: 10,
   },
   bottomControls: {
     flexDirection: 'row',

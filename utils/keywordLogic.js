@@ -1,8 +1,40 @@
 import { BACKEND_BASE_URL } from '../constants/config';
 
+export const translateOnly = async (text, targetLang, signal = null) => {
+  if (!text || !text.trim() || !targetLang || targetLang === 'English') {
+    return text || '';
+  }
+  const langMap = {
+    'Hindi': 'hi',
+    'Kannada': 'kn',
+    'Malayalam': 'ml',
+    'Tamil': 'ta'
+  };
+  const langCode = langMap[targetLang] || targetLang.toLowerCase();
+
+  const response = await fetch(`${BACKEND_BASE_URL}/api/translate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ 
+      text,
+      target_lang: langCode
+    }),
+    signal
+  });
+
+  if (!response.ok) {
+    throw new Error(`Translate API returned ${response.status}`);
+  }
+
+  const result = await response.json();
+  return result.translated_text || text;
+};
+
 export const processSpeech = async (text, targetLang, sessionId = 0, signal = null) => {
   if (!text || !text.trim()) {
-    return { summary: '', symbols: null };
+    return { summary: '', cleanedText: '', symbols: null };
   }
 
   try {
@@ -28,41 +60,22 @@ export const processSpeech = async (text, targetLang, sessionId = 0, signal = nu
       throw new Error(extractResult.error);
     }
     
-    let finalSummary = extractResult.cleaned_text || text;
+    const cleanedText = extractResult.cleaned_text || text;
+    let finalSummary = cleanedText;
     const finalSymbols = extractResult.keywords || null;
 
     // 2. Translate only if needed, using the cleaned English text
     if (targetLang && targetLang !== 'English') {
-      const langMap = {
-        'Hindi': 'hi',
-        'Kannada': 'kn',
-        'Malayalam': 'ml',
-        'Tamil': 'ta'
-      };
-      const langCode = langMap[targetLang] || 'en';
-
-      const translateResponse = await fetch(`${BACKEND_BASE_URL}/api/translate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ 
-          text: finalSummary,
-          target_lang: langCode
-        }),
-        signal
-      });
-
-      if (translateResponse.ok) {
-        const translateResult = await translateResponse.json();
-        if (translateResult.translated_text) {
-          finalSummary = translateResult.translated_text;
-        }
+      try {
+        finalSummary = await translateOnly(cleanedText, targetLang, signal);
+      } catch (tErr) {
+        console.warn("Translation sub-call error:", tErr);
       }
     }
 
     return {
       summary: finalSummary,
+      cleanedText,
       symbols: finalSymbols
     };
 

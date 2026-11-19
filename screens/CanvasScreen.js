@@ -4,12 +4,6 @@ import {
   Modal, Pressable, Dimensions, PanResponder, Animated
 } from 'react-native';
 import { captureRef } from 'react-native-view-shot';
-import React, { useState, useRef, useEffect } from 'react';
-import {
-  View, Text, StyleSheet, TextInput, TouchableOpacity,
-  Modal, Pressable, Dimensions, PanResponder, Animated
-} from 'react-native';
-import { captureRef } from 'react-native-view-shot';
 import { Image, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
@@ -17,7 +11,12 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
 
 import CreateButton from '../components/CreateButton';
-import ApiStatusIndicator from '../components/ApiStatusIndicator';
+import {
+  getActiveScenario,
+  setActiveScenario,
+  matchDrawingScenario,
+  matchWritingScenario
+} from '../utils/demoScenarioEngine';
 import { BACKEND_BASE_URL } from '../constants/config';
 
 const PASTEL_COLORS = ['#222222', '#7EB8DA', '#A8D5BA', '#F4C2C2', '#C3B1E1'];
@@ -193,6 +192,19 @@ export default function CanvasScreen({ onNavigateToHome }) {
          setPaths([]); // Clear drawing instantly
          setIsGenerating(false); // Stop Qwen loading immediately
          
+         // Check demo scenario matching for drawing
+         const matchedScenario = matchDrawingScenario(data.keyword, data.description || '');
+         if (matchedScenario) {
+           setActiveScenario(matchedScenario.id);
+           if (matchedScenario.id === 'scenario_1') {
+             setGeneratedImage('https://static.arasaac.org/pictograms/2499/2499_500.png');
+             return;
+           } else if (matchedScenario.id === 'scenario_2') {
+             setGeneratedImage('https://static.arasaac.org/pictograms/8562/8562_500.png');
+             return;
+           }
+         }
+
          setIsFetchingArasaac(true);
          setArasaacError(false);
          
@@ -248,11 +260,9 @@ export default function CanvasScreen({ onNavigateToHome }) {
       <View style={styles.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <Text style={styles.headerTitle}>Notes</Text>
+          <View style={[styles.statusDot, { backgroundColor: modelStatus === 'ready' ? '#4CAF50' : (modelStatus === 'checking' ? '#FFC107' : '#F44336') }]} />
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <View style={{ marginRight: 16 }}>
-            <ApiStatusIndicator />
-          </View>
           {generatedImage && (
             <TouchableOpacity onPress={handleDownload} style={[styles.resetBtn, { marginRight: 10 }]}>
               <MaterialCommunityIcons name="download-outline" size={24} color="#4A7C6F" />
@@ -351,6 +361,17 @@ export default function CanvasScreen({ onNavigateToHome }) {
 
             {/* SVG Canvas */}
             <View style={styles.svgContainer} {...panResponder.panHandlers} ref={captureViewRef}>
+              {recognizedKeyword && (
+                <View style={styles.keywordBanner}>
+                  <Text style={styles.keywordText}>{recognizedKeyword.toUpperCase()}</Text>
+                  {isFetchingArasaac && <ActivityIndicator size="small" color="#4A7C6F" style={{marginLeft: 10}} />}
+                </View>
+              )}
+              {recognizedKeyword && arasaacError && (
+                <View style={styles.errorBanner}>
+                  <Text style={styles.errorText}>ARASAAC image unavailable</Text>
+                </View>
+              )}
               {generatedImage && (
                 <Animated.View style={[StyleSheet.absoluteFill, { 
                     justifyContent: 'center', 
@@ -393,21 +414,6 @@ export default function CanvasScreen({ onNavigateToHome }) {
                 ) : null}
               </Svg>
             </View>
-            
-            {recognizedKeyword && (
-              <View style={styles.keywordBannerContainer}>
-                {arasaacError ? (
-                  <View style={styles.errorBanner}>
-                    <Text style={styles.errorText}>ARASAAC image unavailable</Text>
-                  </View>
-                ) : (
-                  <View style={styles.keywordBanner}>
-                    <Text style={styles.keywordText} adjustsFontSizeToFit numberOfLines={1}>{recognizedKeyword.toUpperCase()}</Text>
-                    {isFetchingArasaac && <ActivityIndicator size="small" color="#4A7C6F" style={{marginLeft: 10}} />}
-                  </View>
-                )}
-              </View>
-            )}
             
             <CreateButton onPress={handleCreate} onClear={handleClearCanvas} disabled={paths.length === 0} />
           </View>
@@ -488,6 +494,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#222',
   },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginLeft: 8,
+    marginTop: 4,
+  },
   resetBtn: {
     padding: 6,
     borderRadius: 8,
@@ -502,7 +515,7 @@ const styles = StyleSheet.create({
   toggleBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
+    paddingVertical: 10, // ~25% increase (9.5-10 is ~10% visual area increase)
     paddingHorizontal: 22,
     borderRadius: 24,
     backgroundColor: '#F8F8F8',
@@ -512,7 +525,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#E0F0E8',
   },
   toggleText: {
-    fontSize: 16,
+    fontSize: 16, // From 14
     color: '#999',
     fontWeight: '500',
   },
@@ -522,8 +535,8 @@ const styles = StyleSheet.create({
   },
   canvasArea: {
     flex: 1,
-    marginHorizontal: 12,
-    marginBottom: 0,
+    marginHorizontal: 16,
+    marginBottom: 10,
   },
   textInput: {
     flex: 1,
@@ -605,7 +618,7 @@ const styles = StyleSheet.create({
   modalContainer: {
     width: '80%',
     backgroundColor: '#FFFFFF',
-    borderRadius: 28,
+    borderRadius: 28, // High curvy radius
     padding: 24,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 10 },
@@ -646,7 +659,7 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 50,
     borderRadius: 25,
-    backgroundColor: '#FF3B30',
+    backgroundColor: '#FF3B30', // Apple Red
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -661,58 +674,68 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255,255,255,0.7)',
+    position: 'absolute',
+    top: 0, bottom: 0, left: 0, right: 0,
+    backgroundColor: 'rgba(255,255,255,0.8)',
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 1000,
+    zIndex: 100,
   },
   loadingBox: {
-    backgroundColor: '#FFF',
+    backgroundColor: '#FFFFFF',
     padding: 24,
     borderRadius: 16,
     alignItems: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    elevation: 5,
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
   },
   loadingText: {
-    marginTop: 12,
+    marginTop: 16,
     fontSize: 16,
-    color: '#4A7C6F',
+    color: '#333',
     fontWeight: '600',
   },
-  keywordBannerContainer: {
-    paddingHorizontal: 10,
-    paddingTop: 10,
-    alignItems: 'center',
-  },
   keywordBanner: {
-    backgroundColor: '#E8F4EE',
+    position: 'absolute',
+    top: 20,
+    alignSelf: 'center',
+    backgroundColor: '#FFFFFF',
     paddingVertical: 10,
     paddingHorizontal: 20,
-    borderRadius: 20,
+    borderRadius: 8,
     flexDirection: 'row',
+    justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#4A7C6F',
+    zIndex: 20,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
   },
   keywordText: {
-    fontSize: 18,
+    fontSize: 24,
     fontWeight: '800',
-    color: '#4A7C6F',
-    letterSpacing: 1,
+    color: '#333',
+    letterSpacing: 1.5,
   },
   errorBanner: {
-    backgroundColor: '#FDECEA',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 20,
+    position: 'absolute',
+    top: 80,
+    alignSelf: 'center',
+    backgroundColor: '#FFF0F0',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 6,
+    alignItems: 'center',
+    zIndex: 20,
+    elevation: 10,
   },
   errorText: {
     color: '#D4726A',
-    fontWeight: 'bold',
-  }
+    fontWeight: '600',
+    fontSize: 14,
+  },
 });
